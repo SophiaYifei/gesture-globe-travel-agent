@@ -1,0 +1,671 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WanderMind — AI Vacation Planner</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<style>
+  :root {
+    --ink: #1a1714;
+    --paper: #f8f4ee;
+    --cream: #ede8df;
+    --rust: #c4522a;
+    --rust-light: #e8846a;
+    --gold: #c9a84c;
+    --sage: #5a7a5c;
+    --sky: #3a7ca5;
+    --muted: #7a7068;
+    --border: rgba(26,23,20,0.12);
+    --serif: 'Playfair Display', Georgia, serif;
+    --sans: 'DM Sans', system-ui, sans-serif;
+    --shadow: 0 4px 24px rgba(26,23,20,0.1);
+    --panel-w: 420px;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; overflow: hidden; background: var(--ink); font-family: var(--sans); }
+
+  /* ── Layout ── */
+  #app { display: flex; height: 100vh; position: relative; }
+  #map-container { flex: 1; position: relative; }
+  #map { width: 100%; height: 100%; }
+
+  /* ── Top bar ── */
+  #topbar {
+    position: absolute; top: 0; left: 0; right: 0; z-index: 900;
+    display: flex; align-items: center; gap: 20px;
+    padding: 14px 20px;
+    background: linear-gradient(to bottom, rgba(26,23,20,0.75) 0%, transparent 100%);
+    pointer-events: none;
+  }
+  #topbar h1 {
+    font-family: var(--serif); font-size: 22px; font-weight: 400;
+    color: #fff; letter-spacing: 0.02em;
+    pointer-events: none;
+  }
+  #topbar h1 span { color: var(--gold); font-style: italic; }
+  #topbar p { color: rgba(255,255,255,0.7); font-size: 13px; font-weight: 300; }
+
+  /* ── Agent toggle ── */
+  #agent-toggle {
+    position: absolute; top: 16px; right: 440px; z-index: 910;
+    display: flex; background: rgba(26,23,20,0.82); border-radius: 32px;
+    padding: 4px; gap: 2px; backdrop-filter: blur(8px);
+    border: 1px solid rgba(255,255,255,0.1);
+  }
+  .agent-btn {
+    padding: 6px 16px; border-radius: 24px; border: none; cursor: pointer;
+    font-family: var(--sans); font-size: 12px; font-weight: 500; letter-spacing: 0.03em;
+    transition: all 0.2s; color: rgba(255,255,255,0.55); background: transparent;
+  }
+  .agent-btn.active { background: var(--rust); color: #fff; }
+
+  /* ── Cursor hint ── */
+  #cursor-hint {
+    position: absolute; bottom: 28px; left: 50%; transform: translateX(-50%);
+    z-index: 900; background: rgba(26,23,20,0.78); color: rgba(255,255,255,0.85);
+    font-size: 13px; font-weight: 300; padding: 8px 20px; border-radius: 32px;
+    backdrop-filter: blur(8px); pointer-events: none;
+    transition: opacity 0.4s;
+    border: 1px solid rgba(255,255,255,0.08);
+  }
+
+  /* ── Side panel ── */
+  #panel {
+    width: var(--panel-w); height: 100%; background: var(--paper);
+    display: flex; flex-direction: column; position: relative;
+    border-left: 1px solid var(--border);
+    transition: transform 0.4s cubic-bezier(0.22,1,0.36,1);
+  }
+  #panel.hidden { transform: translateX(100%); }
+
+  #panel-header {
+    padding: 24px 24px 0;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  #panel-header .dest-meta {
+    display: flex; align-items: flex-start; justify-content: space-between;
+    margin-bottom: 16px;
+  }
+  #dest-emoji { font-size: 32px; line-height: 1; margin-bottom: 6px; }
+  #dest-name {
+    font-family: var(--serif); font-size: 26px; font-weight: 700;
+    color: var(--ink); line-height: 1.2;
+  }
+  #dest-sub { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  #close-panel {
+    background: none; border: none; cursor: pointer; color: var(--muted);
+    font-size: 20px; padding: 4px; line-height: 1; flex-shrink: 0;
+  }
+  #close-panel:hover { color: var(--ink); }
+
+  /* Tabs */
+  .tabs { display: flex; gap: 0; margin-top: 16px; }
+  .tab-btn {
+    flex: 1; padding: 10px 8px; border: none; background: none; cursor: pointer;
+    font-family: var(--sans); font-size: 12px; font-weight: 500; letter-spacing: 0.04em;
+    color: var(--muted); border-bottom: 2px solid transparent;
+    transition: all 0.2s; text-transform: uppercase;
+  }
+  .tab-btn.active { color: var(--rust); border-bottom-color: var(--rust); }
+
+  /* Panel body */
+  #panel-body { flex: 1; overflow-y: auto; padding: 20px 24px 32px; }
+  #panel-body::-webkit-scrollbar { width: 4px; }
+  #panel-body::-webkit-scrollbar-track { background: transparent; }
+  #panel-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+  /* Loading */
+  #loading {
+    display: none; flex-direction: column; align-items: center; justify-content: center;
+    height: 200px; gap: 16px;
+  }
+  #loading.show { display: flex; }
+  .spinner {
+    width: 36px; height: 36px; border: 2px solid var(--cream);
+    border-top-color: var(--rust); border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #loading p { color: var(--muted); font-size: 13px; }
+
+  /* ── Itinerary tab ── */
+  .section-label {
+    font-size: 10px; font-weight: 500; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--muted); margin-bottom: 12px;
+  }
+
+  /* Quick stats row */
+  .stats-row { display: flex; gap: 10px; margin-bottom: 24px; }
+  .stat-card {
+    flex: 1; background: var(--cream); border-radius: 10px;
+    padding: 12px; text-align: center;
+  }
+  .stat-card .val { font-family: var(--serif); font-size: 15px; color: var(--ink); font-weight: 700; }
+  .stat-card .lbl { font-size: 10px; color: var(--muted); margin-top: 3px; text-transform: uppercase; letter-spacing: 0.06em; }
+
+  /* Day cards */
+  .day-card {
+    background: #fff; border-radius: 12px; margin-bottom: 12px;
+    border: 1px solid var(--border); overflow: hidden;
+    transition: box-shadow 0.2s;
+  }
+  .day-card:hover { box-shadow: var(--shadow); }
+  .day-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 16px; cursor: pointer; user-select: none;
+  }
+  .day-num {
+    font-size: 10px; font-weight: 500; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--rust);
+  }
+  .day-theme {
+    font-family: var(--serif); font-size: 15px; color: var(--ink);
+    margin-top: 2px;
+  }
+  .day-chevron { color: var(--muted); transition: transform 0.25s; font-size: 14px; }
+  .day-card.open .day-chevron { transform: rotate(180deg); }
+  .day-body { display: none; padding: 0 16px 14px; border-top: 1px solid var(--cream); }
+  .day-card.open .day-body { display: block; }
+  .time-slot { display: flex; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--cream); }
+  .time-slot:last-of-type { border-bottom: none; }
+  .slot-label { font-size: 10px; font-weight: 500; color: var(--muted); min-width: 64px; padding-top: 2px; text-transform: uppercase; letter-spacing: 0.06em; }
+  .slot-text { font-size: 13px; color: var(--ink); line-height: 1.5; }
+  .day-tip { margin-top: 10px; padding: 10px 12px; background: var(--cream); border-radius: 8px; border-left: 3px solid var(--gold); }
+  .day-tip p { font-size: 12px; color: var(--muted); line-height: 1.5; font-style: italic; }
+
+  /* Food section */
+  .food-grid { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 24px; }
+  .food-pill {
+    background: var(--cream); border-radius: 20px; padding: 6px 14px;
+    font-size: 12px; color: var(--ink); border: 1px solid var(--border);
+  }
+
+  /* Tips list */
+  .tips-list { list-style: none; }
+  .tips-list li {
+    display: flex; gap: 10px; padding: 10px 0;
+    border-bottom: 1px solid var(--cream); font-size: 13px; color: var(--ink); line-height: 1.5;
+  }
+  .tips-list li::before { content: "→"; color: var(--rust); flex-shrink: 0; }
+
+  /* ── Info tab ── */
+  .info-block { margin-bottom: 24px; }
+  .info-block h4 { font-family: var(--serif); font-size: 16px; margin-bottom: 8px; color: var(--ink); }
+  .info-block p { font-size: 13px; color: #4a443c; line-height: 1.7; }
+  .perception-badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--cream); border-radius: 6px; padding: 8px 12px;
+    font-size: 12px; color: var(--muted); border: 1px solid var(--border);
+  }
+  .dl-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--sage); flex-shrink: 0; }
+  .nd-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--sky); flex-shrink: 0; }
+
+  /* ── Refine tab ── */
+  .refine-group { margin-bottom: 20px; }
+  .refine-group label { display: block; font-size: 11px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+  .refine-group select, .refine-group input[type=range] { width: 100%; }
+  select {
+    padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px;
+    background: #fff; font-family: var(--sans); font-size: 13px; color: var(--ink);
+    cursor: pointer; appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%237a7068'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 12px center;
+  }
+  input[type=range] { accent-color: var(--rust); height: 4px; }
+  .duration-display { font-size: 13px; color: var(--rust); font-weight: 500; margin-top: 6px; }
+
+  #refine-btn {
+    width: 100%; padding: 13px; background: var(--rust); color: #fff; border: none;
+    border-radius: 10px; font-family: var(--sans); font-size: 14px; font-weight: 500;
+    cursor: pointer; transition: background 0.2s; margin-top: 8px;
+  }
+  #refine-btn:hover { background: #a84020; }
+  #refine-btn:disabled { background: var(--cream); color: var(--muted); cursor: not-allowed; }
+
+  /* ── Eval panel ── */
+  #eval-panel {
+    position: absolute; bottom: 20px; left: 20px; z-index: 900;
+    background: rgba(26,23,20,0.88); backdrop-filter: blur(12px);
+    border-radius: 12px; padding: 14px 18px;
+    border: 1px solid rgba(255,255,255,0.08);
+    max-width: 320px; display: none;
+  }
+  #eval-panel.show { display: block; }
+  #eval-panel h3 { font-family: var(--serif); font-size: 15px; color: #fff; margin-bottom: 10px; }
+  .eval-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+  .eval-row .lbl { font-size: 11px; color: rgba(255,255,255,0.5); }
+  .eval-row .val { font-size: 12px; font-weight: 500; color: rgba(255,255,255,0.9); }
+  .eval-bar-wrap { height: 3px; background: rgba(255,255,255,0.1); border-radius: 2px; margin-bottom: 12px; }
+  .eval-bar { height: 3px; border-radius: 2px; background: var(--rust-light); transition: width 0.6s; }
+  #eval-btn {
+    position: absolute; bottom: 20px; left: 20px; z-index: 901;
+    background: rgba(26,23,20,0.78); backdrop-filter: blur(8px); color: rgba(255,255,255,0.7);
+    border: 1px solid rgba(255,255,255,0.1); border-radius: 8px;
+    padding: 8px 16px; font-size: 12px; cursor: pointer; font-family: var(--sans);
+    transition: all 0.2s;
+  }
+  #eval-btn:hover { color: #fff; }
+
+  /* ── Map pin ── */
+  .map-pin {
+    width: 32px; height: 32px; background: var(--rust); border-radius: 50% 50% 50% 0;
+    transform: rotate(-45deg); border: 3px solid #fff; box-shadow: 0 2px 8px rgba(0,0,0,0.35);
+  }
+
+  /* ── Responsive ── */
+  @media (max-width: 700px) {
+    :root { --panel-w: 100vw; }
+    #panel { position: absolute; top: 0; right: 0; height: 100%; z-index: 800; }
+    #agent-toggle { right: 16px; }
+  }
+
+  /* ── Leaflet overrides ── */
+  .leaflet-container { font-family: var(--sans); cursor: crosshair !important; }
+  .leaflet-control-attribution { font-size: 9px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <!-- Map -->
+  <div id="map-container">
+    <div id="map"></div>
+
+    <div id="topbar">
+      <div>
+        <h1>Wander<span>Mind</span></h1>
+        <p>AI-powered vacation planner</p>
+      </div>
+    </div>
+
+    <div id="agent-toggle">
+      <button class="agent-btn" id="btn-non-dl" onclick="setAgent('non_dl')">⚙ Rule-based</button>
+      <button class="agent-btn active" id="btn-dl" onclick="setAgent('dl')">✦ AI (DL)</button>
+    </div>
+
+    <div id="cursor-hint">✦ Click anywhere on the map to plan your vacation</div>
+
+    <button id="eval-btn" onclick="runEval()">📊 Run Evaluation</button>
+    <div id="eval-panel">
+      <h3>Evaluation Results</h3>
+      <div id="eval-content"></div>
+    </div>
+  </div>
+
+  <!-- Side panel -->
+  <div id="panel" class="hidden">
+    <div id="panel-header">
+      <div class="dest-meta">
+        <div>
+          <div id="dest-emoji">🌍</div>
+          <div id="dest-name">Destination</div>
+          <div id="dest-sub">Loading…</div>
+        </div>
+        <button id="close-panel" onclick="closePanel()">✕</button>
+      </div>
+      <div class="tabs">
+        <button class="tab-btn active" onclick="showTab('itinerary')">Itinerary</button>
+        <button class="tab-btn" onclick="showTab('food')">Food & Tips</button>
+        <button class="tab-btn" onclick="showTab('refine')">Refine</button>
+        <button class="tab-btn" onclick="showTab('info')">Info</button>
+      </div>
+    </div>
+    <div id="panel-body">
+      <div id="loading"><div class="spinner"></div><p>Planning your trip…</p></div>
+      <div id="tab-itinerary" class="tab-content"></div>
+      <div id="tab-food" class="tab-content" style="display:none"></div>
+      <div id="tab-refine" class="tab-content" style="display:none"></div>
+      <div id="tab-info" class="tab-content" style="display:none"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+let currentAgent = 'dl';
+let currentLat = null, currentLng = null;
+let currentResult = null;
+let conversationHistory = [];
+let marker = null;
+let activeTab = 'itinerary';
+let duration = 7;
+
+// ── Map init ───────────────────────────────────────────────────────────────
+const map = L.map('map', {
+  center: [25, 10], zoom: 3,
+  zoomControl: true,
+  attributionControl: true,
+});
+
+L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+  attribution: '© OpenStreetMap contributors © CARTO',
+  subdomains: 'abcd', maxZoom: 19,
+}).addTo(map);
+
+const pinIcon = L.divIcon({
+  className: '',
+  html: '<div class="map-pin"></div>',
+  iconSize: [32, 32], iconAnchor: [16, 32],
+});
+
+map.on('click', async (e) => {
+  currentLat = e.latlng.lat;
+  currentLng = e.latlng.lng;
+  conversationHistory = [];
+
+  if (marker) map.removeLayer(marker);
+  marker = L.marker([currentLat, currentLng], { icon: pinIcon }).addTo(map);
+
+  document.getElementById('cursor-hint').style.opacity = '0';
+  openPanel();
+  await fetchPlan();
+});
+
+// ── Agent toggle ───────────────────────────────────────────────────────────
+function setAgent(type) {
+  currentAgent = type;
+  document.getElementById('btn-dl').classList.toggle('active', type === 'dl');
+  document.getElementById('btn-non-dl').classList.toggle('active', type === 'non_dl');
+  if (currentLat !== null) fetchPlan();
+}
+
+// ── Panel ──────────────────────────────────────────────────────────────────
+function openPanel() {
+  document.getElementById('panel').classList.remove('hidden');
+  document.getElementById('dest-name').textContent = 'Locating…';
+  document.getElementById('dest-sub').textContent = '';
+  document.getElementById('dest-emoji').textContent = '⏳';
+  setLoading(true);
+}
+
+function closePanel() {
+  document.getElementById('panel').classList.add('hidden');
+  if (marker) { map.removeLayer(marker); marker = null; }
+  document.getElementById('cursor-hint').style.opacity = '1';
+}
+
+function setLoading(on) {
+  document.getElementById('loading').classList.toggle('show', on);
+  ['itinerary','food','refine','info'].forEach(t => {
+    document.getElementById('tab-' + t).style.display = on ? 'none' : (t === activeTab ? 'block' : 'none');
+  });
+}
+
+function showTab(name) {
+  activeTab = name;
+  document.querySelectorAll('.tab-btn').forEach((b, i) => {
+    b.classList.toggle('active', ['itinerary','food','refine','info'][i] === name);
+  });
+  ['itinerary','food','refine','info'].forEach(t => {
+    document.getElementById('tab-' + t).style.display = t === name ? 'block' : 'none';
+  });
+}
+
+// ── API call ───────────────────────────────────────────────────────────────
+async function fetchPlan(preferences = {}) {
+  if (!preferences.duration) preferences.duration = duration;
+  setLoading(true);
+
+  try {
+    let mapImage = null;
+    try {
+      const canvas = await html2canvas(document.getElementById('map'), {
+        useCORS: true, allowTaint: true, scale: 0.25, logging: false
+      });
+      mapImage = canvas.toDataURL('image/png');
+    } catch(e) { console.log('Screenshot failed:', e); }
+
+    const body = {
+      lat: currentLat,
+      lng: currentLng,
+      agent: currentAgent,
+      preferences,
+      conversation_history: conversationHistory,
+      map_image: mapImage,
+    };
+
+    const resp = await fetch('/plan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await resp.json();
+    currentResult = data;
+    if (data.conversation_history) conversationHistory = data.conversation_history;
+    renderResult(data);
+  } catch (err) {
+    setLoading(false);
+    document.getElementById('tab-itinerary').innerHTML =
+      `<p style="color:var(--rust);font-size:13px;">Error: ${err.message}</p>`;
+    showTab('itinerary');
+  }
+}
+
+// ── Render ──────────────────────────────────────────────────────────────────
+function renderResult(data) {
+  const r = data.region;
+  const p = data.plan;
+
+  document.getElementById('dest-emoji').textContent = r.emoji || '🌍';
+  document.getElementById('dest-name').textContent = r.name || 'Unknown';
+  document.getElementById('dest-sub').textContent =
+    `${(r.climate || '').replace(/\b\w/g,c=>c.toUpperCase())} · ${(r.biome || '').replace(/\b\w/g,c=>c.toUpperCase())} · ${currentLat.toFixed(2)}°, ${currentLng.toFixed(2)}°`;
+
+  renderItineraryTab(p);
+  renderFoodTab(p);
+  renderRefineTab();
+  renderInfoTab(data);
+
+  setLoading(false);
+  showTab(activeTab === 'refine' ? activeTab : 'itinerary');
+}
+
+function renderItineraryTab(p) {
+  const itinerary = p.itinerary || [];
+  let html = '';
+
+  // Stats row
+  html += `<div class="stats-row">
+    <div class="stat-card"><div class="val">${itinerary.length}d</div><div class="lbl">Duration</div></div>
+    <div class="stat-card"><div class="val">${escHtml(p.best_season || '—')}</div><div class="lbl">Best time</div></div>
+    <div class="stat-card"><div class="val">${escHtml(p.budget || p.budget_per_day || '—')}</div><div class="lbl">Per day</div></div>
+  </div>`;
+
+  // Highlights
+  if (p.highlights && p.highlights.length) {
+    html += `<p class="section-label">Highlights</p>`;
+    html += `<ul class="tips-list" style="margin-bottom:20px;">`;
+    p.highlights.forEach(h => { html += `<li>${escHtml(h)}</li>`; });
+    html += `</ul>`;
+  }
+
+  html += `<p class="section-label">Day by day</p>`;
+  itinerary.forEach((day, i) => {
+    html += `<div class="day-card" id="day-${i}">
+      <div class="day-header" onclick="toggleDay(${i})">
+        <div>
+          <div class="day-num">${escHtml(day.day)}</div>
+          <div class="day-theme">${escHtml(day.theme || 'Explore')}</div>
+        </div>
+        <span class="day-chevron">▾</span>
+      </div>
+      <div class="day-body">`;
+
+    if (day.morning || day.afternoon || day.evening) {
+      ['morning','afternoon','evening'].forEach(slot => {
+        if (day[slot]) {
+          html += `<div class="time-slot">
+            <span class="slot-label">${slot}</span>
+            <span class="slot-text">${escHtml(day[slot])}</span>
+          </div>`;
+        }
+      });
+    } else if (day.activity) {
+      html += `<div class="time-slot">
+        <span class="slot-label">Activity</span>
+        <span class="slot-text">${escHtml(day.activity)}</span>
+      </div>`;
+    }
+
+    if (day.tip) {
+      html += `<div class="day-tip"><p>💡 ${escHtml(day.tip)}</p></div>`;
+    }
+    html += `</div></div>`;
+  });
+
+  document.getElementById('tab-itinerary').innerHTML = html;
+  // Open first day by default
+  const first = document.getElementById('day-0');
+  if (first) { first.classList.add('open'); }
+}
+
+function renderFoodTab(p) {
+  const foods = p.food || [];
+  const tips = p.tips || [];
+  let html = '';
+
+  html += `<p class="section-label">Must-try food & drink</p>`;
+  html += `<div class="food-grid">`;
+  foods.forEach(f => { html += `<span class="food-pill">🍴 ${escHtml(f)}</span>`; });
+  html += `</div>`;
+
+  if (tips.length) {
+    html += `<p class="section-label">Travel tips</p>`;
+    html += `<ul class="tips-list">`;
+    tips.forEach(t => { html += `<li>${escHtml(t)}</li>`; });
+    html += `</ul>`;
+  }
+
+  document.getElementById('tab-food').innerHTML = html;
+}
+
+function renderRefineTab() {
+  document.getElementById('tab-refine').innerHTML = `
+    <div class="refine-group">
+      <label>Trip duration</label>
+      <input type="range" min="3" max="14" value="${duration}" id="dur-slider" oninput="document.getElementById('dur-val').textContent=this.value+' days'; duration=parseInt(this.value);">
+      <div class="duration-display" id="dur-val">${duration} days</div>
+    </div>
+    <div class="refine-group">
+      <label>Trip style</label>
+      <select id="sel-style">
+        <option value="balanced">Balanced mix</option>
+        <option value="adventure">Adventure & outdoors</option>
+        <option value="cultural">Culture & history</option>
+        <option value="relaxation">Relaxation & wellness</option>
+        <option value="foodie">Food & culinary</option>
+        <option value="budget">Budget backpacker</option>
+      </select>
+    </div>
+    <div class="refine-group">
+      <label>Budget level</label>
+      <select id="sel-budget">
+        <option value="mid-range">Mid-range</option>
+        <option value="budget">Budget</option>
+        <option value="luxury">Luxury</option>
+      </select>
+    </div>
+    <button id="refine-btn" onclick="applyRefine()">✦ Regenerate Itinerary</button>
+  `;
+}
+
+function renderInfoTab(data) {
+  const r = data.region;
+  const isNonDL = data.agent === 'non_dl';
+  document.getElementById('tab-info').innerHTML = `
+    <div class="info-block">
+      <h4>Perception method</h4>
+      <div class="perception-badge" style="margin-bottom:8px;">
+        <div class="${isNonDL ? 'nd-dot' : 'dl-dot'}"></div>
+        ${escHtml(data.perception_method || (isNonDL ? 'Classical CV + coordinate lookup' : 'CLIP zero-shot classification'))}
+      </div>
+      <p>${isNonDL
+        ? 'The non-DL agent analyzes map pixel colors using a color histogram (OpenCV/PIL) and cross-references GPS coordinates against a geographic region database to identify the destination.'
+        : 'The DL agent runs the map screenshot through OpenAI\'s CLIP model, comparing image features against 12 natural language terrain descriptions using zero-shot classification. No labelled training data required.'
+      }</p>
+    </div>
+    <div class="info-block">
+      <h4>Planning method</h4>
+      <p>${isNonDL
+        ? 'Rule-based template system: the identified biome/climate maps to a curated activity template. Day-by-day itinerary is assembled by cycling through activity slots, food lists, and seasonal tips from a lookup table.'
+        : 'Large language model (Claude): the identified location, biome, climate, and user preferences are structured into a prompt. The LLM generates a detailed, personalised itinerary with time-of-day activity blocks, local food, and practical tips.'
+      }</p>
+    </div>
+    <div class="info-block">
+      <h4>Region detected</h4>
+      <p><strong>${escHtml(r.name)}</strong><br>
+      Climate: ${escHtml(r.climate)} · Biome: ${escHtml(r.biome)}<br>
+      Coordinates: ${currentLat.toFixed(4)}°, ${currentLng.toFixed(4)}°
+      ${r.clip_label ? `<br>CLIP label: "${escHtml(r.clip_label)}" (${(r.clip_confidence*100).toFixed(1)}% confidence)` : ''}
+      </p>
+    </div>
+    <div class="info-block">
+      <h4>About this project</h4>
+      <p>Two-agent vacation planner built for a university AI agent course project. Demonstrates perception, planning, and control pipelines — one without deep learning (classical CV + rules), one with deep learning (CLIP + LLM).</p>
+    </div>
+  `;
+}
+
+// ── UI helpers ─────────────────────────────────────────────────────────────
+function toggleDay(i) {
+  const el = document.getElementById('day-' + i);
+  el.classList.toggle('open');
+}
+
+function applyRefine() {
+  const style = document.getElementById('sel-style').value;
+  const budget = document.getElementById('sel-budget').value;
+  fetchPlan({ duration, style, budget });
+}
+
+function escHtml(s) {
+  if (typeof s !== 'string') s = String(s || '');
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Evaluation ─────────────────────────────────────────────────────────────
+async function runEval() {
+  const panel = document.getElementById('eval-panel');
+  const btn = document.getElementById('eval-btn');
+  btn.textContent = '⏳ Running…';
+  btn.disabled = true;
+
+  try {
+    const resp = await fetch('/evaluate', { method: 'POST' });
+    const data = await resp.json();
+    renderEval(data);
+    panel.classList.add('show');
+  } catch(e) {
+    alert('Evaluation failed: ' + e.message);
+  } finally {
+    btn.textContent = '📊 Run Evaluation';
+    btn.disabled = false;
+  }
+}
+
+function renderEval(data) {
+  const s = data.summary;
+  let html = '';
+  for (const key of ['non_dl', 'dl']) {
+    const label = key === 'dl' ? '✦ DL Agent' : '⚙ Non-DL Agent';
+    const d = s[key];
+    html += `<div style="margin-bottom:12px;">
+      <div class="eval-row"><span class="lbl">${label}</span></div>
+      <div class="eval-row"><span class="lbl">Region accuracy</span><span class="val">${(d.avg_accuracy_score*100).toFixed(0)}%</span></div>
+      <div class="eval-bar-wrap"><div class="eval-bar" style="width:${d.avg_accuracy_score*100}%; background:${key==='dl'?'#e8846a':'#3a7ca5'}"></div></div>
+      <div class="eval-row"><span class="lbl">Itinerary relevance</span><span class="val">${(d.avg_relevance_score*100).toFixed(0)}%</span></div>
+      <div class="eval-bar-wrap"><div class="eval-bar" style="width:${d.avg_relevance_score*100}%; background:${key==='dl'?'#e8846a':'#3a7ca5'}"></div></div>
+      <div class="eval-row"><span class="lbl">Response time</span><span class="val">${d.avg_response_time_ms}ms</span></div>
+    </div>`;
+  }
+  html += `<button onclick="document.getElementById('eval-panel').classList.remove('show')" style="background:none;border:1px solid rgba(255,255,255,0.15);color:rgba(255,255,255,0.5);padding:5px 12px;border-radius:6px;cursor:pointer;font-size:11px;margin-top:4px;">Close</button>`;
+  document.getElementById('eval-content').innerHTML = html;
+}
+</script>
+</body>
+</html>
