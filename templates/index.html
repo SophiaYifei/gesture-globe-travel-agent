@@ -9,6 +9,7 @@
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <style>
   :root {
     --ink: #1a1714;
@@ -24,7 +25,7 @@
     --serif: 'Playfair Display', Georgia, serif;
     --sans: 'DM Sans', system-ui, sans-serif;
     --shadow: 0 4px 24px rgba(26,23,20,0.1);
-    --panel-w: 420px;
+    --panel-w: 460px;
   }
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { height: 100%; overflow: hidden; background: var(--ink); font-family: var(--sans); }
@@ -52,7 +53,7 @@
 
   /* ── Agent toggle ── */
   #agent-toggle {
-    position: absolute; top: 16px; right: 440px; z-index: 910;
+    position: absolute; top: 16px; right: calc(var(--panel-w) + 20px); z-index: 910;
     display: flex; background: rgba(26,23,20,0.82); border-radius: 32px;
     padding: 4px; gap: 2px; backdrop-filter: blur(8px);
     border: 1px solid rgba(255,255,255,0.1);
@@ -64,14 +65,25 @@
   }
   .agent-btn.active { background: var(--rust); color: #fff; }
 
-  /* ── Cursor hint ── */
-  #cursor-hint {
+  /* ── Phase banner (cursor hint evolves based on state) ── */
+  #phase-banner {
     position: absolute; bottom: 28px; left: 50%; transform: translateX(-50%);
-    z-index: 900; background: rgba(26,23,20,0.78); color: rgba(255,255,255,0.85);
-    font-size: 13px; font-weight: 300; padding: 8px 20px; border-radius: 32px;
+    z-index: 900; background: rgba(26,23,20,0.85); color: #fff;
+    font-size: 13px; font-weight: 400; padding: 10px 22px; border-radius: 32px;
     backdrop-filter: blur(8px); pointer-events: none;
-    transition: opacity 0.4s;
-    border: 1px solid rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.1);
+    transition: opacity 0.3s, background 0.3s;
+    display: flex; align-items: center; gap: 8px;
+  }
+  #phase-banner.origin { background: rgba(58,124,165,0.92); }
+  #phase-banner.dest   { background: rgba(196,82,42,0.92); }
+  #phase-banner.hidden { opacity: 0; }
+  #phase-banner .dot {
+    width: 8px; height: 8px; border-radius: 50%; background: #fff;
+    animation: pulse-dot 1.4s infinite;
+  }
+  @keyframes pulse-dot {
+    0%,100% { opacity: 0.3; } 50% { opacity: 1; }
   }
 
   /* ── Side panel ── */
@@ -79,40 +91,25 @@
     width: var(--panel-w); height: 100%; background: var(--paper);
     display: flex; flex-direction: column; position: relative;
     border-left: 1px solid var(--border);
-    transition: transform 0.4s cubic-bezier(0.22,1,0.36,1);
-  }
-  #panel.hidden { transform: translateX(100%); }
-
-  #panel-header {
-    padding: 24px 24px 0;
-    border-bottom: 1px solid var(--border);
     flex-shrink: 0;
   }
-  #panel-header .dest-meta {
-    display: flex; align-items: flex-start; justify-content: space-between;
-    margin-bottom: 16px;
+  #panel-header {
+    padding: 22px 24px 16px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0; display: flex; align-items: center; justify-content: space-between;
   }
-  #dest-emoji { font-size: 32px; line-height: 1; margin-bottom: 6px; }
-  #dest-name {
-    font-family: var(--serif); font-size: 26px; font-weight: 700;
+  #panel-title {
+    font-family: var(--serif); font-size: 22px; font-weight: 700;
     color: var(--ink); line-height: 1.2;
   }
-  #dest-sub { font-size: 12px; color: var(--muted); margin-top: 4px; }
-  #close-panel {
-    background: none; border: none; cursor: pointer; color: var(--muted);
-    font-size: 20px; padding: 4px; line-height: 1; flex-shrink: 0;
+  #panel-subtitle { font-size: 12px; color: var(--muted); margin-top: 3px; }
+  #reset-btn {
+    background: none; border: 1px solid var(--border); border-radius: 6px;
+    padding: 6px 12px; font-size: 11px; color: var(--muted); cursor: pointer;
+    font-family: var(--sans); letter-spacing: 0.04em; text-transform: uppercase;
+    transition: all 0.2s;
   }
-  #close-panel:hover { color: var(--ink); }
-
-  /* Tabs */
-  .tabs { display: flex; gap: 0; margin-top: 16px; }
-  .tab-btn {
-    flex: 1; padding: 10px 8px; border: none; background: none; cursor: pointer;
-    font-family: var(--sans); font-size: 12px; font-weight: 500; letter-spacing: 0.04em;
-    color: var(--muted); border-bottom: 2px solid transparent;
-    transition: all 0.2s; text-transform: uppercase;
-  }
-  .tab-btn.active { color: var(--rust); border-bottom-color: var(--rust); }
+  #reset-btn:hover { color: var(--ink); border-color: var(--ink); }
 
   /* Panel body */
   #panel-body { flex: 1; overflow-y: auto; padding: 20px 24px 32px; }
@@ -120,113 +117,179 @@
   #panel-body::-webkit-scrollbar-track { background: transparent; }
   #panel-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
 
-  /* Loading */
-  #loading {
-    display: none; flex-direction: column; align-items: center; justify-content: center;
-    height: 200px; gap: 16px;
+  /* ── Step indicator ── */
+  .steps-indicator {
+    display: flex; gap: 6px; margin-bottom: 24px;
   }
-  #loading.show { display: flex; }
+  .step-dot {
+    flex: 1; height: 4px; border-radius: 2px; background: var(--cream);
+    transition: background 0.3s;
+  }
+  .step-dot.active { background: var(--rust); }
+  .step-dot.done   { background: var(--sage); }
+
+  /* ── Confirm card ── */
+  .confirm-card {
+    background: #fff; border-radius: 12px; padding: 20px;
+    border: 1px solid var(--border); box-shadow: var(--shadow);
+    margin-bottom: 16px;
+  }
+  .confirm-card .label {
+    font-size: 10px; font-weight: 500; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--muted); margin-bottom: 8px;
+  }
+  .confirm-card .name {
+    font-family: var(--serif); font-size: 20px; color: var(--ink);
+    font-weight: 700; line-height: 1.3; margin-bottom: 4px;
+  }
+  .confirm-card .coords {
+    font-size: 11px; color: var(--muted); font-family: ui-monospace, monospace;
+  }
+  .confirm-card .loading {
+    font-size: 13px; color: var(--muted); font-style: italic; margin: 8px 0;
+  }
+  .confirm-card .actions {
+    display: flex; gap: 8px; margin-top: 16px;
+  }
+  .btn-primary, .btn-secondary {
+    flex: 1; padding: 10px 14px; border-radius: 8px; border: none; cursor: pointer;
+    font-family: var(--sans); font-size: 13px; font-weight: 500;
+    transition: all 0.2s;
+  }
+  .btn-primary {
+    background: var(--rust); color: #fff;
+  }
+  .btn-primary:hover { background: #a84020; }
+  .btn-primary:disabled { background: var(--cream); color: var(--muted); cursor: not-allowed; }
+  .btn-secondary {
+    background: transparent; color: var(--muted); border: 1px solid var(--border);
+  }
+  .btn-secondary:hover { color: var(--ink); border-color: var(--ink); }
+
+  /* ── Selected locations summary ── */
+  .location-summary {
+    background: var(--cream); border-radius: 10px; padding: 14px 16px;
+    margin-bottom: 16px;
+  }
+  .location-summary .row {
+    display: flex; align-items: center; gap: 10px; padding: 4px 0;
+  }
+  .location-summary .pin-dot {
+    width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
+  }
+  .location-summary .pin-dot.origin { background: var(--sky); }
+  .location-summary .pin-dot.dest   { background: var(--rust); }
+  .location-summary .label {
+    font-size: 10px; font-weight: 500; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--muted); width: 72px; flex-shrink: 0;
+  }
+  .location-summary .value {
+    font-size: 13px; color: var(--ink); font-weight: 500;
+  }
+
+  /* ── Setup form ── */
+  .form-section { margin-bottom: 18px; }
+  .form-section label {
+    display: block; font-size: 10px; font-weight: 500; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--muted); margin-bottom: 6px;
+  }
+  .form-section input[type=text],
+  .form-section input[type=number],
+  .form-section input[type=date],
+  .form-section select,
+  .form-section textarea {
+    width: 100%; padding: 9px 12px; border: 1px solid var(--border);
+    border-radius: 8px; background: #fff; font-family: var(--sans);
+    font-size: 13px; color: var(--ink);
+  }
+  .form-section textarea { resize: vertical; min-height: 60px; font-family: var(--sans); }
+  .form-section select {
+    cursor: pointer; appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%237a7068'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 12px center;
+  }
+  .form-row { display: flex; gap: 10px; }
+  .form-row .form-section { flex: 1; }
+
+  /* Travel-style chip multiselect */
+  .chip-group { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip {
+    padding: 6px 12px; border: 1px solid var(--border); border-radius: 20px;
+    font-size: 12px; color: var(--muted); cursor: pointer; background: #fff;
+    user-select: none; transition: all 0.15s;
+  }
+  .chip:hover { color: var(--ink); }
+  .chip.selected {
+    background: var(--rust); color: #fff; border-color: var(--rust);
+  }
+
+  /* ── Loading ── */
+  .planning-box {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 40px 20px; gap: 14px; text-align: center;
+  }
   .spinner {
     width: 36px; height: 36px; border: 2px solid var(--cream);
     border-top-color: var(--rust); border-radius: 50%;
     animation: spin 0.8s linear infinite;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
-  #loading p { color: var(--muted); font-size: 13px; }
+  .planning-box p { color: var(--muted); font-size: 13px; }
+  .planning-box .small { font-size: 11px; opacity: 0.7; }
 
-  /* ── Itinerary tab ── */
-  .section-label {
-    font-size: 10px; font-weight: 500; letter-spacing: 0.1em;
-    text-transform: uppercase; color: var(--muted); margin-bottom: 12px;
-  }
-
-  /* Quick stats row */
-  .stats-row { display: flex; gap: 10px; margin-bottom: 24px; }
-  .stat-card {
-    flex: 1; background: var(--cream); border-radius: 10px;
-    padding: 12px; text-align: center;
-  }
-  .stat-card .val { font-family: var(--serif); font-size: 15px; color: var(--ink); font-weight: 700; }
-  .stat-card .lbl { font-size: 10px; color: var(--muted); margin-top: 3px; text-transform: uppercase; letter-spacing: 0.06em; }
-
-  /* Day cards */
-  .day-card {
-    background: #fff; border-radius: 12px; margin-bottom: 12px;
-    border: 1px solid var(--border); overflow: hidden;
-    transition: box-shadow 0.2s;
-  }
-  .day-card:hover { box-shadow: var(--shadow); }
-  .day-header {
+  /* ── Markdown result ── */
+  .result-meta {
     display: flex; align-items: center; justify-content: space-between;
-    padding: 12px 16px; cursor: pointer; user-select: none;
+    margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--border);
   }
-  .day-num {
-    font-size: 10px; font-weight: 500; letter-spacing: 0.08em;
-    text-transform: uppercase; color: var(--rust);
+  .result-meta .route {
+    font-family: var(--serif); font-size: 16px; color: var(--ink); font-weight: 700;
   }
-  .day-theme {
-    font-family: var(--serif); font-size: 15px; color: var(--ink);
-    margin-top: 2px;
-  }
-  .day-chevron { color: var(--muted); transition: transform 0.25s; font-size: 14px; }
-  .day-card.open .day-chevron { transform: rotate(180deg); }
-  .day-body { display: none; padding: 0 16px 14px; border-top: 1px solid var(--cream); }
-  .day-card.open .day-body { display: block; }
-  .time-slot { display: flex; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--cream); }
-  .time-slot:last-of-type { border-bottom: none; }
-  .slot-label { font-size: 10px; font-weight: 500; color: var(--muted); min-width: 64px; padding-top: 2px; text-transform: uppercase; letter-spacing: 0.06em; }
-  .slot-text { font-size: 13px; color: var(--ink); line-height: 1.5; }
-  .day-tip { margin-top: 10px; padding: 10px 12px; background: var(--cream); border-radius: 8px; border-left: 3px solid var(--gold); }
-  .day-tip p { font-size: 12px; color: var(--muted); line-height: 1.5; font-style: italic; }
+  .result-meta .small { font-size: 11px; color: var(--muted); }
 
-  /* Food section */
-  .food-grid { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 24px; }
-  .food-pill {
-    background: var(--cream); border-radius: 20px; padding: 6px 14px;
-    font-size: 12px; color: var(--ink); border: 1px solid var(--border);
+  .markdown-body { font-size: 13px; line-height: 1.65; color: var(--ink); }
+  .markdown-body h1, .markdown-body h2, .markdown-body h3 {
+    font-family: var(--serif); color: var(--ink); margin-top: 20px; margin-bottom: 8px;
+  }
+  .markdown-body h1 { font-size: 22px; }
+  .markdown-body h2 { font-size: 18px; }
+  .markdown-body h3 {
+    font-size: 15px; color: var(--rust);
+    letter-spacing: 0.01em; padding-top: 4px;
+  }
+  .markdown-body h3:first-child { margin-top: 0; }
+  .markdown-body p { margin: 6px 0; }
+  .markdown-body ul, .markdown-body ol { padding-left: 20px; margin: 6px 0; }
+  .markdown-body li { margin: 3px 0; }
+  .markdown-body a {
+    color: var(--rust); text-decoration: underline;
+    text-decoration-thickness: 1px; text-underline-offset: 2px;
+  }
+  .markdown-body a:hover { color: #a84020; }
+  .markdown-body table {
+    border-collapse: collapse; margin: 12px 0; width: 100%; font-size: 12px;
+  }
+  .markdown-body th, .markdown-body td {
+    border: 1px solid var(--border); padding: 6px 10px; text-align: left;
+  }
+  .markdown-body th { background: var(--cream); font-weight: 500; }
+  .markdown-body strong { font-weight: 600; }
+  .markdown-body code {
+    background: var(--cream); padding: 1px 5px; border-radius: 4px;
+    font-family: ui-monospace, monospace; font-size: 12px;
+  }
+  .markdown-body blockquote {
+    border-left: 3px solid var(--gold); padding: 8px 12px;
+    background: var(--cream); border-radius: 0 8px 8px 0; margin: 10px 0;
+    font-style: italic; color: var(--muted);
   }
 
-  /* Tips list */
-  .tips-list { list-style: none; }
-  .tips-list li {
-    display: flex; gap: 10px; padding: 10px 0;
-    border-bottom: 1px solid var(--cream); font-size: 13px; color: var(--ink); line-height: 1.5;
+  .agent-details {
+    margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border);
+    font-size: 11px; color: var(--muted);
   }
-  .tips-list li::before { content: "→"; color: var(--rust); flex-shrink: 0; }
-
-  /* ── Info tab ── */
-  .info-block { margin-bottom: 24px; }
-  .info-block h4 { font-family: var(--serif); font-size: 16px; margin-bottom: 8px; color: var(--ink); }
-  .info-block p { font-size: 13px; color: #4a443c; line-height: 1.7; }
-  .perception-badge {
-    display: inline-flex; align-items: center; gap: 6px;
-    background: var(--cream); border-radius: 6px; padding: 8px 12px;
-    font-size: 12px; color: var(--muted); border: 1px solid var(--border);
-  }
-  .dl-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--sage); flex-shrink: 0; }
-  .nd-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--sky); flex-shrink: 0; }
-
-  /* ── Refine tab ── */
-  .refine-group { margin-bottom: 20px; }
-  .refine-group label { display: block; font-size: 11px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
-  .refine-group select, .refine-group input[type=range] { width: 100%; }
-  select {
-    padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px;
-    background: #fff; font-family: var(--sans); font-size: 13px; color: var(--ink);
-    cursor: pointer; appearance: none;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%237a7068'/%3E%3C/svg%3E");
-    background-repeat: no-repeat; background-position: right 12px center;
-  }
-  input[type=range] { accent-color: var(--rust); height: 4px; }
-  .duration-display { font-size: 13px; color: var(--rust); font-weight: 500; margin-top: 6px; }
-
-  #refine-btn {
-    width: 100%; padding: 13px; background: var(--rust); color: #fff; border: none;
-    border-radius: 10px; font-family: var(--sans); font-size: 14px; font-weight: 500;
-    cursor: pointer; transition: background 0.2s; margin-top: 8px;
-  }
-  #refine-btn:hover { background: #a84020; }
-  #refine-btn:disabled { background: var(--cream); color: var(--muted); cursor: not-allowed; }
+  .agent-details summary { cursor: pointer; padding: 4px 0; }
+  .agent-details ul { margin-top: 8px; padding-left: 16px; }
 
   /* ── Eval panel ── */
   #eval-panel {
@@ -252,14 +315,25 @@
   }
   #eval-btn:hover { color: #fff; }
 
-  /* ── Map pin ── */
+  /* ── Map pins ── */
   .map-pin {
-    width: 32px; height: 32px; background: var(--rust); border-radius: 50% 50% 50% 0;
-    transform: rotate(-45deg); border: 3px solid #fff; box-shadow: 0 2px 8px rgba(0,0,0,0.35);
+    width: 28px; height: 28px; border-radius: 50% 50% 50% 0;
+    transform: rotate(-45deg); border: 3px solid #fff;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.35);
+  }
+  .map-pin.origin-pin  { background: var(--sky); }
+  .map-pin.dest-pin    { background: var(--rust); }
+  .map-pin.pending-pin {
+    background: var(--gold);
+    animation: pulse-pin 1.4s ease-in-out infinite;
+  }
+  @keyframes pulse-pin {
+    0%, 100% { box-shadow: 0 2px 8px rgba(0,0,0,0.35), 0 0 0 0 rgba(201,168,76,0.6); }
+    50%      { box-shadow: 0 2px 8px rgba(0,0,0,0.35), 0 0 0 10px rgba(201,168,76,0); }
   }
 
   /* ── Responsive ── */
-  @media (max-width: 700px) {
+  @media (max-width: 760px) {
     :root { --panel-w: 100vw; }
     #panel { position: absolute; top: 0; right: 0; height: 100%; z-index: 800; }
     #agent-toggle { right: 16px; }
@@ -279,7 +353,7 @@
     <div id="topbar">
       <div>
         <h1>Wander<span>Mind</span></h1>
-        <p>AI-powered vacation planner</p>
+        <p>AI-powered vacation planner · click origin, then destination</p>
       </div>
     </div>
 
@@ -288,7 +362,10 @@
       <button class="agent-btn active" id="btn-dl" onclick="setAgent('dl')">✦ AI (DL)</button>
     </div>
 
-    <div id="cursor-hint">✦ Click anywhere on the map to plan your vacation</div>
+    <div id="phase-banner" class="origin">
+      <span class="dot"></span>
+      <span id="phase-text">Click your departure city</span>
+    </div>
 
     <button id="eval-btn" onclick="runEval()">📊 Run Evaluation</button>
     <div id="eval-panel">
@@ -297,36 +374,27 @@
     </div>
   </div>
 
-  <!-- Side panel -->
-  <div id="panel" class="hidden">
+  <!-- Side panel — always visible; body content swaps by phase -->
+  <div id="panel">
     <div id="panel-header">
-      <div class="dest-meta">
-        <div>
-          <div id="dest-emoji">🌍</div>
-          <div id="dest-name">Destination</div>
-          <div id="dest-sub">Loading…</div>
-        </div>
-        <button id="close-panel" onclick="closePanel()">✕</button>
+      <div>
+        <div id="panel-title">Plan your trip</div>
+        <div id="panel-subtitle">Pick two points on the map</div>
       </div>
-      <div class="tabs">
-        <button class="tab-btn active" onclick="showTab('itinerary')">Itinerary</button>
-        <button class="tab-btn" onclick="showTab('food')">Food & Tips</button>
-        <button class="tab-btn" onclick="showTab('refine')">Refine</button>
-        <button class="tab-btn" onclick="showTab('info')">Info</button>
-      </div>
+      <button id="reset-btn" onclick="resetAll()">Reset</button>
     </div>
     <div id="panel-body">
-      <div id="loading"><div class="spinner"></div><p>Planning your trip…</p></div>
-      <div id="tab-itinerary" class="tab-content"></div>
-      <div id="tab-food" class="tab-content" style="display:none"></div>
-      <div id="tab-refine" class="tab-content" style="display:none"></div>
-      <div id="tab-info" class="tab-content" style="display:none"></div>
+      <!-- Populated by renderPanel() -->
     </div>
   </div>
 </div>
 
 <script>
-// ── State ──────────────────────────────────────────────────────────────────
+/* ════════════════════════════════════════════════════════════════════════════
+ * OLD TIFFANY LOGIC — single-click-auto-plan flow, preserved for reference.
+ * Replaced by the yifei origin/destination confirm + form flow below.
+ * ════════════════════════════════════════════════════════════════════════════
+
 let currentAgent = 'dl';
 let currentLat = null, currentLng = null;
 let currentResult = null;
@@ -335,7 +403,6 @@ let marker = null;
 let activeTab = 'itinerary';
 let duration = 7;
 
-// ── Map init ───────────────────────────────────────────────────────────────
 const map = L.map('map', {
   center: [25, 10], zoom: 3,
   zoomControl: true,
@@ -357,290 +424,528 @@ map.on('click', async (e) => {
   currentLat = e.latlng.lat;
   currentLng = e.latlng.lng;
   conversationHistory = [];
-
   if (marker) map.removeLayer(marker);
   marker = L.marker([currentLat, currentLng], { icon: pinIcon }).addTo(map);
-
   document.getElementById('cursor-hint').style.opacity = '0';
   openPanel();
   await fetchPlan();
 });
 
-// ── Agent toggle ───────────────────────────────────────────────────────────
+function setAgent(type) { ... }
+function openPanel()    { ... }
+function closePanel()   { ... }
+function setLoading(on) { ... }
+function showTab(name)  { ... }
+async function fetchPlan(preferences = {}) { ... }
+function renderResult(data) { ... }
+function renderItineraryTab(p) { ... }
+function renderFoodTab(p) { ... }
+function renderRefineTab() { ... }
+function renderInfoTab(data) { ... }
+function toggleDay(i) { ... }
+function applyRefine() { ... }
+function escHtml(s) { ... }
+async function runEval() { ... }
+function renderEval(data) { ... }
+*/
+
+// ════════════════════════════════════════════════════════════════════════════
+// YIFEI FLOW — origin/destination confirmation + settings form + markdown result
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── State machine ─────────────────────────────────────────────────────────
+// Phases: PICK_ORIGIN → CONFIRM_ORIGIN → PICK_DEST → CONFIRM_DEST → FORM → PLANNING → RESULT
+let phase = 'PICK_ORIGIN';
+let currentAgent = 'dl';
+let origin = null;        // {name, lat, lng, marker}
+let destination = null;   // {name, lat, lng, marker}
+let pendingPick = null;   // {name, lat, lng, marker, loading}
+let currentResult = null;
+let formState = null;     // {start_date, end_date, num_people, group_type, transport, travel_style[], budget, notes}
+
+// ── Map init ──────────────────────────────────────────────────────────────
+const map = L.map('map', {
+  center: [25, 10], zoom: 3,
+  zoomControl: true, attributionControl: true,
+});
+L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+  attribution: '© OpenStreetMap contributors © CARTO',
+  subdomains: 'abcd', maxZoom: 19,
+}).addTo(map);
+
+const originIcon  = L.divIcon({ className: '', html: '<div class="map-pin origin-pin"></div>',  iconSize: [28,28], iconAnchor: [14,28] });
+const destIcon    = L.divIcon({ className: '', html: '<div class="map-pin dest-pin"></div>',    iconSize: [28,28], iconAnchor: [14,28] });
+const pendingIcon = L.divIcon({ className: '', html: '<div class="map-pin pending-pin"></div>', iconSize: [28,28], iconAnchor: [14,28] });
+
+map.on('click', async (e) => {
+  if (phase !== 'PICK_ORIGIN' && phase !== 'PICK_DEST') return;
+
+  const { lat, lng } = e.latlng;
+
+  // Remove any previous pending marker
+  if (pendingPick && pendingPick.marker) map.removeLayer(pendingPick.marker);
+
+  const marker = L.marker([lat, lng], { icon: pendingIcon }).addTo(map);
+  pendingPick = { lat, lng, marker, name: null, loading: true };
+  phase = (phase === 'PICK_ORIGIN') ? 'CONFIRM_ORIGIN' : 'CONFIRM_DEST';
+  renderPanel();
+
+  try {
+    const name = await reverseGeocode(lat, lng);
+    pendingPick.name = name;
+  } catch (err) {
+    console.warn('Nominatim failed:', err);
+    pendingPick.name = `(${lat.toFixed(2)}°, ${lng.toFixed(2)}°)`;
+  }
+  pendingPick.loading = false;
+  renderPanel();
+});
+
+// ── Reverse geocoding (Nominatim) ─────────────────────────────────────────
+async function reverseGeocode(lat, lng) {
+  const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}&zoom=10&addressdetails=1`;
+  const resp = await fetch(url, { headers: { 'Accept-Language': 'en' } });
+  if (!resp.ok) throw new Error(`Nominatim HTTP ${resp.status}`);
+  const data = await resp.json();
+  const a = data.address || {};
+  const city = a.city || a.town || a.village || a.hamlet || a.municipality || a.county || a.state;
+  const parts = [city, a.state, a.country].filter(Boolean);
+  const uniq = [...new Set(parts)];
+  if (uniq.length) return uniq.join(', ');
+  if (data.display_name) return data.display_name.split(',').slice(0, 3).join(',').trim();
+  return `(${lat.toFixed(2)}°, ${lng.toFixed(2)}°)`;
+}
+
+// ── Agent toggle ──────────────────────────────────────────────────────────
 function setAgent(type) {
   currentAgent = type;
   document.getElementById('btn-dl').classList.toggle('active', type === 'dl');
   document.getElementById('btn-non-dl').classList.toggle('active', type === 'non_dl');
-  if (currentLat !== null) fetchPlan();
+  // If we already have a plan, re-run with the other agent
+  if (phase === 'RESULT' && origin && destination && formState) {
+    startPlanning();
+  }
 }
 
-// ── Panel ──────────────────────────────────────────────────────────────────
-function openPanel() {
-  document.getElementById('panel').classList.remove('hidden');
-  document.getElementById('dest-name').textContent = 'Locating…';
-  document.getElementById('dest-sub').textContent = '';
-  document.getElementById('dest-emoji').textContent = '⏳';
-  setLoading(true);
+// ── Confirm / cancel / reset ─────────────────────────────────────────────
+function confirmPick() {
+  if (!pendingPick) return;
+  const isOrigin = (phase === 'CONFIRM_ORIGIN');
+  pendingPick.marker.setIcon(isOrigin ? originIcon : destIcon);
+  if (isOrigin) {
+    origin = pendingPick;
+    phase = 'PICK_DEST';
+  } else {
+    destination = pendingPick;
+    phase = 'FORM';
+    ensureFormDefaults();
+  }
+  pendingPick = null;
+  renderPanel();
 }
 
-function closePanel() {
-  document.getElementById('panel').classList.add('hidden');
-  if (marker) { map.removeLayer(marker); marker = null; }
-  document.getElementById('cursor-hint').style.opacity = '1';
+function cancelPick() {
+  if (pendingPick && pendingPick.marker) map.removeLayer(pendingPick.marker);
+  pendingPick = null;
+  phase = (phase === 'CONFIRM_ORIGIN') ? 'PICK_ORIGIN' : 'PICK_DEST';
+  renderPanel();
 }
 
-function setLoading(on) {
-  document.getElementById('loading').classList.toggle('show', on);
-  ['itinerary','food','refine','info'].forEach(t => {
-    document.getElementById('tab-' + t).style.display = on ? 'none' : (t === activeTab ? 'block' : 'none');
-  });
+function resetAll() {
+  for (const p of [origin, destination, pendingPick]) {
+    if (p && p.marker) map.removeLayer(p.marker);
+  }
+  origin = null; destination = null; pendingPick = null;
+  currentResult = null; formState = null;
+  phase = 'PICK_ORIGIN';
+  renderPanel();
 }
 
-function showTab(name) {
-  activeTab = name;
-  document.querySelectorAll('.tab-btn').forEach((b, i) => {
-    b.classList.toggle('active', ['itinerary','food','refine','info'][i] === name);
-  });
-  ['itinerary','food','refine','info'].forEach(t => {
-    document.getElementById('tab-' + t).style.display = t === name ? 'block' : 'none';
-  });
+function editForm() {
+  phase = 'FORM';
+  renderPanel();
 }
 
-// ── API call ───────────────────────────────────────────────────────────────
-async function fetchPlan(preferences = {}) {
-  if (!preferences.duration) preferences.duration = duration;
-  setLoading(true);
+// ── Form defaults ─────────────────────────────────────────────────────────
+function ensureFormDefaults() {
+  if (formState) return;
+  const today = new Date();
+  const plus = (d) => { const x = new Date(today); x.setDate(x.getDate() + d); return x.toISOString().slice(0,10); };
+  formState = {
+    start_date: plus(14),
+    end_date: plus(18),
+    num_people: 2,
+    group_type: 'couple',
+    transport: 'flight',
+    travel_style: ['culture', 'foodie'],
+    budget: '',
+    notes: '',
+  };
+}
+
+function captureForm() {
+  const v = (id) => document.getElementById(id).value;
+  const chips = [...document.querySelectorAll('.chip.selected')].map(c => c.dataset.value);
+  formState = {
+    start_date:   v('f-start'),
+    end_date:     v('f-end'),
+    num_people:   parseInt(v('f-num'), 10) || 1,
+    group_type:   v('f-group'),
+    transport:    v('f-transport'),
+    travel_style: chips,
+    budget:       v('f-budget').trim(),
+    notes:        v('f-notes').trim(),
+  };
+}
+
+// ── Planning ──────────────────────────────────────────────────────────────
+async function startPlanning() {
+  if (phase === 'FORM') captureForm();
+  phase = 'PLANNING';
+  renderPanel();
+
+  const payload = {
+    agent: currentAgent,
+    origin:      { name: origin.name,      lat: origin.lat,      lng: origin.lng },
+    destination: { name: destination.name, lat: destination.lat, lng: destination.lng },
+    ...formState,
+  };
 
   try {
-    let mapImage = null;
-    try {
-      const canvas = await html2canvas(document.getElementById('map'), {
-        useCORS: true, allowTaint: true, scale: 0.25, logging: false
-      });
-      mapImage = canvas.toDataURL('image/png');
-    } catch(e) { console.log('Screenshot failed:', e); }
-
-    const body = {
-      lat: currentLat,
-      lng: currentLng,
-      agent: currentAgent,
-      preferences,
-      conversation_history: conversationHistory,
-      map_image: mapImage,
-    };
-
     const resp = await fetch('/plan', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      body: JSON.stringify(payload),
     });
-    const data = await resp.json();
-    currentResult = data;
-    if (data.conversation_history) conversationHistory = data.conversation_history;
-    renderResult(data);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    currentResult = await resp.json();
+    phase = 'RESULT';
   } catch (err) {
-    setLoading(false);
-    document.getElementById('tab-itinerary').innerHTML =
-      `<p style="color:var(--rust);font-size:13px;">Error: ${err.message}</p>`;
-    showTab('itinerary');
+    console.error(err);
+    alert('Plan failed: ' + err.message);
+    phase = 'FORM';
+  }
+  renderPanel();
+}
+
+// ── Rendering ─────────────────────────────────────────────────────────────
+function renderPanel() {
+  updatePhaseBanner();
+  updateHeader();
+  const body = document.getElementById('panel-body');
+  body.innerHTML = '';
+
+  if (phase === 'PICK_ORIGIN' || phase === 'PICK_DEST') {
+    body.appendChild(renderStepsIndicator());
+    body.appendChild(renderLocationSummary());
+    body.appendChild(renderInstructionCard());
+  } else if (phase === 'CONFIRM_ORIGIN' || phase === 'CONFIRM_DEST') {
+    body.appendChild(renderStepsIndicator());
+    body.appendChild(renderLocationSummary());
+    body.appendChild(renderConfirmCard());
+  } else if (phase === 'FORM') {
+    body.appendChild(renderStepsIndicator());
+    body.appendChild(renderLocationSummary());
+    body.appendChild(renderForm());
+  } else if (phase === 'PLANNING') {
+    body.appendChild(renderLocationSummary());
+    body.appendChild(renderPlanningBox());
+  } else if (phase === 'RESULT') {
+    body.appendChild(renderResultBody());
   }
 }
 
-// ── Render ──────────────────────────────────────────────────────────────────
-function renderResult(data) {
-  const r = data.region;
-  const p = data.plan;
-
-  document.getElementById('dest-emoji').textContent = r.emoji || '🌍';
-  document.getElementById('dest-name').textContent = r.name || 'Unknown';
-  document.getElementById('dest-sub').textContent =
-    `${(r.climate || '').replace(/\b\w/g,c=>c.toUpperCase())} · ${(r.biome || '').replace(/\b\w/g,c=>c.toUpperCase())} · ${currentLat.toFixed(2)}°, ${currentLng.toFixed(2)}°`;
-
-  renderItineraryTab(p);
-  renderFoodTab(p);
-  renderRefineTab();
-  renderInfoTab(data);
-
-  setLoading(false);
-  showTab(activeTab === 'refine' ? activeTab : 'itinerary');
+function updatePhaseBanner() {
+  const banner = document.getElementById('phase-banner');
+  const text = document.getElementById('phase-text');
+  banner.classList.remove('origin', 'dest', 'hidden');
+  if (phase === 'PICK_ORIGIN') {
+    banner.classList.add('origin');
+    text.textContent = 'Click your departure city';
+  } else if (phase === 'PICK_DEST') {
+    banner.classList.add('dest');
+    text.textContent = 'Click your destination';
+  } else {
+    banner.classList.add('hidden');
+  }
 }
 
-function renderItineraryTab(p) {
-  const itinerary = p.itinerary || [];
-  let html = '';
+function updateHeader() {
+  const title = document.getElementById('panel-title');
+  const sub = document.getElementById('panel-subtitle');
+  const titles = {
+    PICK_ORIGIN:    ['Plan your trip',     'Step 1 · Pick your departure city'],
+    CONFIRM_ORIGIN: ['Confirm origin',     'Is this where you\'re starting from?'],
+    PICK_DEST:      ['Where to?',          'Step 2 · Pick your destination'],
+    CONFIRM_DEST:   ['Confirm destination','Is this where you want to go?'],
+    FORM:           ['Trip details',       'Step 3 · Fill in the details'],
+    PLANNING:       ['Planning…',          'Agent is thinking'],
+    RESULT:         ['Your itinerary',     routeLabel()],
+  };
+  const [t, s] = titles[phase] || ['Plan your trip', ''];
+  title.textContent = t;
+  sub.textContent = s;
+}
 
-  // Stats row
-  html += `<div class="stats-row">
-    <div class="stat-card"><div class="val">${itinerary.length}d</div><div class="lbl">Duration</div></div>
-    <div class="stat-card"><div class="val">${escHtml(p.best_season || '—')}</div><div class="lbl">Best time</div></div>
-    <div class="stat-card"><div class="val">${escHtml(p.budget || p.budget_per_day || '—')}</div><div class="lbl">Per day</div></div>
-  </div>`;
+function routeLabel() {
+  if (origin && destination) return `${origin.name.split(',')[0]} → ${destination.name.split(',')[0]}`;
+  return '';
+}
 
-  // Highlights
-  if (p.highlights && p.highlights.length) {
-    html += `<p class="section-label">Highlights</p>`;
-    html += `<ul class="tips-list" style="margin-bottom:20px;">`;
-    p.highlights.forEach(h => { html += `<li>${escHtml(h)}</li>`; });
-    html += `</ul>`;
-  }
-
-  html += `<p class="section-label">Day by day</p>`;
-  itinerary.forEach((day, i) => {
-    html += `<div class="day-card" id="day-${i}">
-      <div class="day-header" onclick="toggleDay(${i})">
-        <div>
-          <div class="day-num">${escHtml(day.day)}</div>
-          <div class="day-theme">${escHtml(day.theme || 'Explore')}</div>
-        </div>
-        <span class="day-chevron">▾</span>
-      </div>
-      <div class="day-body">`;
-
-    if (day.morning || day.afternoon || day.evening) {
-      ['morning','afternoon','evening'].forEach(slot => {
-        if (day[slot]) {
-          html += `<div class="time-slot">
-            <span class="slot-label">${slot}</span>
-            <span class="slot-text">${escHtml(day[slot])}</span>
-          </div>`;
-        }
-      });
-    } else if (day.activity) {
-      html += `<div class="time-slot">
-        <span class="slot-label">Activity</span>
-        <span class="slot-text">${escHtml(day.activity)}</span>
-      </div>`;
-    }
-
-    if (day.tip) {
-      html += `<div class="day-tip"><p>💡 ${escHtml(day.tip)}</p></div>`;
-    }
-    html += `</div></div>`;
+function renderStepsIndicator() {
+  const div = document.createElement('div');
+  div.className = 'steps-indicator';
+  const states = ['origin', 'dest', 'form'];
+  let current;
+  if (phase === 'PICK_ORIGIN' || phase === 'CONFIRM_ORIGIN') current = 0;
+  else if (phase === 'PICK_DEST' || phase === 'CONFIRM_DEST') current = 1;
+  else current = 2;
+  states.forEach((_, i) => {
+    const d = document.createElement('div');
+    d.className = 'step-dot';
+    if (i < current) d.classList.add('done');
+    else if (i === current) d.classList.add('active');
+    div.appendChild(d);
   });
-
-  document.getElementById('tab-itinerary').innerHTML = html;
-  // Open first day by default
-  const first = document.getElementById('day-0');
-  if (first) { first.classList.add('open'); }
+  return div;
 }
 
-function renderFoodTab(p) {
-  const foods = p.food || [];
-  const tips = p.tips || [];
-  let html = '';
-
-  html += `<p class="section-label">Must-try food & drink</p>`;
-  html += `<div class="food-grid">`;
-  foods.forEach(f => { html += `<span class="food-pill">🍴 ${escHtml(f)}</span>`; });
-  html += `</div>`;
-
-  if (tips.length) {
-    html += `<p class="section-label">Travel tips</p>`;
-    html += `<ul class="tips-list">`;
-    tips.forEach(t => { html += `<li>${escHtml(t)}</li>`; });
-    html += `</ul>`;
-  }
-
-  document.getElementById('tab-food').innerHTML = html;
+function renderLocationSummary() {
+  const div = document.createElement('div');
+  div.className = 'location-summary';
+  const mkRow = (cls, label, value) => `
+    <div class="row">
+      <div class="pin-dot ${cls}"></div>
+      <div class="label">${label}</div>
+      <div class="value">${escHtml(value || '—')}</div>
+    </div>`;
+  div.innerHTML =
+    mkRow('origin', 'From', origin ? origin.name : 'Not set') +
+    mkRow('dest',   'To',   destination ? destination.name : 'Not set');
+  return div;
 }
 
-function renderRefineTab() {
-  document.getElementById('tab-refine').innerHTML = `
-    <div class="refine-group">
-      <label>Trip duration</label>
-      <input type="range" min="3" max="14" value="${duration}" id="dur-slider" oninput="document.getElementById('dur-val').textContent=this.value+' days'; duration=parseInt(this.value);">
-      <div class="duration-display" id="dur-val">${duration} days</div>
-    </div>
-    <div class="refine-group">
-      <label>Trip style</label>
-      <select id="sel-style">
-        <option value="balanced">Balanced mix</option>
-        <option value="adventure">Adventure & outdoors</option>
-        <option value="cultural">Culture & history</option>
-        <option value="relaxation">Relaxation & wellness</option>
-        <option value="foodie">Food & culinary</option>
-        <option value="budget">Budget backpacker</option>
-      </select>
-    </div>
-    <div class="refine-group">
-      <label>Budget level</label>
-      <select id="sel-budget">
-        <option value="mid-range">Mid-range</option>
-        <option value="budget">Budget</option>
-        <option value="luxury">Luxury</option>
-      </select>
-    </div>
-    <button id="refine-btn" onclick="applyRefine()">✦ Regenerate Itinerary</button>
+function renderInstructionCard() {
+  const div = document.createElement('div');
+  div.className = 'confirm-card';
+  const which = (phase === 'PICK_ORIGIN') ? 'departure city' : 'destination';
+  div.innerHTML = `
+    <div class="label">Next step</div>
+    <div class="name" style="font-size:16px;">Click the map to choose your ${which}</div>
+    <div class="coords" style="margin-top:8px;">Tip: click near a major city for better results.</div>
   `;
+  return div;
 }
 
-function renderInfoTab(data) {
-  const r = data.region;
-  const isNonDL = data.agent === 'non_dl';
-  document.getElementById('tab-info').innerHTML = `
-    <div class="info-block">
-      <h4>Perception method</h4>
-      <div class="perception-badge" style="margin-bottom:8px;">
-        <div class="${isNonDL ? 'nd-dot' : 'dl-dot'}"></div>
-        ${escHtml(data.perception_method || (isNonDL ? 'Classical CV + coordinate lookup' : 'CLIP zero-shot classification'))}
+function renderConfirmCard() {
+  const div = document.createElement('div');
+  div.className = 'confirm-card';
+  const which = (phase === 'CONFIRM_ORIGIN') ? 'origin' : 'destination';
+  const coords = `${pendingPick.lat.toFixed(4)}°, ${pendingPick.lng.toFixed(4)}°`;
+  const nameHtml = pendingPick.loading
+    ? '<div class="loading">Looking up place name…</div>'
+    : `<div class="name">${escHtml(pendingPick.name)}</div>`;
+  div.innerHTML = `
+    <div class="label">Is this your ${which}?</div>
+    ${nameHtml}
+    <div class="coords">${coords}</div>
+    <div class="actions">
+      <button class="btn-secondary" onclick="cancelPick()">Pick another</button>
+      <button class="btn-primary" onclick="confirmPick()" ${pendingPick.loading ? 'disabled' : ''}>
+        Confirm ${which}
+      </button>
+    </div>
+  `;
+  return div;
+}
+
+function renderForm() {
+  ensureFormDefaults();
+  const f = formState;
+  const styles = ['foodie', 'adventure', 'culture', 'relaxation', 'nightlife', 'shopping', 'nature'];
+  const chips = styles.map(s =>
+    `<span class="chip ${f.travel_style.includes(s) ? 'selected' : ''}" data-value="${s}" onclick="toggleChip(this)">${s}</span>`
+  ).join('');
+
+  const div = document.createElement('div');
+  div.innerHTML = `
+    <div class="form-row">
+      <div class="form-section">
+        <label>Start date</label>
+        <input type="date" id="f-start" value="${f.start_date}">
       </div>
-      <p>${isNonDL
-        ? 'The non-DL agent analyzes map pixel colors using a color histogram (OpenCV/PIL) and cross-references GPS coordinates against a geographic region database to identify the destination.'
-        : 'The DL agent runs the map screenshot through OpenAI\'s CLIP model, comparing image features against 12 natural language terrain descriptions using zero-shot classification. No labelled training data required.'
-      }</p>
+      <div class="form-section">
+        <label>End date</label>
+        <input type="date" id="f-end" value="${f.end_date}">
+      </div>
     </div>
-    <div class="info-block">
-      <h4>Planning method</h4>
-      <p>${isNonDL
-        ? 'Rule-based template system: the identified biome/climate maps to a curated activity template. Day-by-day itinerary is assembled by cycling through activity slots, food lists, and seasonal tips from a lookup table.'
-        : 'Large language model (Claude): the identified location, biome, climate, and user preferences are structured into a prompt. The LLM generates a detailed, personalised itinerary with time-of-day activity blocks, local food, and practical tips.'
-      }</p>
+    <div class="form-row">
+      <div class="form-section">
+        <label>Travelers</label>
+        <input type="number" id="f-num" min="1" max="20" value="${f.num_people}">
+      </div>
+      <div class="form-section">
+        <label>Group type</label>
+        <select id="f-group">
+          ${['couple','friends','family','solo'].map(g =>
+            `<option value="${g}" ${g===f.group_type?'selected':''}>${g}</option>`).join('')}
+        </select>
+      </div>
     </div>
-    <div class="info-block">
-      <h4>Region detected</h4>
-      <p><strong>${escHtml(r.name)}</strong><br>
-      Climate: ${escHtml(r.climate)} · Biome: ${escHtml(r.biome)}<br>
-      Coordinates: ${currentLat.toFixed(4)}°, ${currentLng.toFixed(4)}°
-      ${r.clip_label ? `<br>CLIP label: "${escHtml(r.clip_label)}" (${(r.clip_confidence*100).toFixed(1)}% confidence)` : ''}
-      </p>
+    <div class="form-section">
+      <label>Transportation</label>
+      <select id="f-transport">
+        <option value="flight" ${f.transport==='flight'?'selected':''}>Flight</option>
+        <option value="road trip / driving" ${f.transport!=='flight'?'selected':''}>Road trip / driving</option>
+      </select>
     </div>
-    <div class="info-block">
-      <h4>About this project</h4>
-      <p>Two-agent vacation planner built for a university AI agent course project. Demonstrates perception, planning, and control pipelines — one without deep learning (classical CV + rules), one with deep learning (CLIP + LLM).</p>
+    <div class="form-section">
+      <label>Travel style (multi-select)</label>
+      <div class="chip-group">${chips}</div>
     </div>
+    <div class="form-section">
+      <label>Total budget (USD, optional)</label>
+      <input type="text" id="f-budget" placeholder="e.g. 3000 or leave empty" value="${escHtml(f.budget)}">
+    </div>
+    <div class="form-section">
+      <label>Anything else?</label>
+      <textarea id="f-notes" placeholder="e.g. One of us is vegetarian, prefer boutique hotels…">${escHtml(f.notes)}</textarea>
+    </div>
+    <button class="btn-primary" onclick="startPlanning()" style="width:100%;padding:13px;margin-top:8px;">
+      ✦ Start Planning
+    </button>
   `;
+  return div;
 }
 
-// ── UI helpers ─────────────────────────────────────────────────────────────
-function toggleDay(i) {
-  const el = document.getElementById('day-' + i);
-  el.classList.toggle('open');
+function toggleChip(el) {
+  el.classList.toggle('selected');
 }
 
-function applyRefine() {
-  const style = document.getElementById('sel-style').value;
-  const budget = document.getElementById('sel-budget').value;
-  fetchPlan({ duration, style, budget });
+function renderPlanningBox() {
+  const div = document.createElement('div');
+  div.className = 'planning-box';
+  div.innerHTML = `
+    <div class="spinner"></div>
+    <p>Planning your trip from <strong>${escHtml(origin.name)}</strong> to <strong>${escHtml(destination.name)}</strong>…</p>
+    <p class="small">The ReAct agent is calling tools (places, weather, flights, rentals). This may take 30–60 seconds.</p>
+  `;
+  return div;
 }
 
+function renderResultBody() {
+  const wrap = document.createElement('div');
+  const r = currentResult || {};
+  const plan = r.plan || {};
+  const region = r.region || {};
+  const markdown = plan.markdown || '';
+  const tools = plan.tools_used || [];
+
+  // Meta row: route + iteration count
+  const meta = document.createElement('div');
+  meta.className = 'result-meta';
+  meta.innerHTML = `
+    <div>
+      <div class="route">${escHtml(origin.name)} → ${escHtml(destination.name)}</div>
+      <div class="small">${escHtml(formState.start_date)} → ${escHtml(formState.end_date)} · ${formState.num_people} ${formState.num_people==1?'traveler':'travelers'} · ${escHtml(formState.group_type)}</div>
+    </div>
+    <button class="btn-secondary" style="flex:0;padding:6px 12px;font-size:11px;" onclick="editForm()">Edit</button>
+  `;
+  wrap.appendChild(meta);
+
+  // Main content
+  const body = document.createElement('div');
+  if (markdown) {
+    body.className = 'markdown-body';
+    body.innerHTML = renderMarkdown(markdown);
+    // Links open in new tab
+    body.querySelectorAll('a').forEach(a => {
+      a.setAttribute('target', '_blank');
+      a.setAttribute('rel', 'noopener');
+    });
+  } else if (plan.itinerary && plan.itinerary.length) {
+    // Non-DL agent: structured day cards fallback
+    body.appendChild(renderStructuredPlan(plan, region));
+  } else {
+    body.innerHTML = '<p style="color:var(--muted);">No itinerary returned.</p>';
+  }
+  wrap.appendChild(body);
+
+  // Agent details expander
+  const details = document.createElement('details');
+  details.className = 'agent-details';
+  details.innerHTML = `
+    <summary>Agent details</summary>
+    <ul>
+      <li>Agent type: <strong>${escHtml(r.agent || '—')}</strong></li>
+      <li>Perception: <strong>${escHtml(r.perception_method || '—')}</strong></li>
+      <li>Region detected: <strong>${escHtml(region.name || '—')}</strong> (${escHtml(region.biome||'')} · ${escHtml(region.climate||'')})</li>
+      <li>Iterations: <strong>${plan.iterations ?? '—'}</strong></li>
+      <li>Tool calls: <strong>${tools.length}</strong>${tools.length ? ' — ' + tools.map(escHtml).join(', ') : ''}</li>
+    </ul>
+  `;
+  wrap.appendChild(details);
+
+  return wrap;
+}
+
+function renderStructuredPlan(plan, region) {
+  // Fallback renderer for non-DL agent (no markdown)
+  const div = document.createElement('div');
+  let html = '';
+  const itin = plan.itinerary || [];
+  html += `<h3 style="font-family:var(--serif);color:var(--rust);margin-bottom:12px;">Day by day</h3>`;
+  itin.forEach(day => {
+    html += `<div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:10px;">
+      <div style="font-size:10px;color:var(--rust);font-weight:500;letter-spacing:0.08em;text-transform:uppercase;">${escHtml(day.day||'')}</div>
+      <div style="font-family:var(--serif);font-size:15px;margin-top:2px;">${escHtml(day.theme||'')}</div>
+      <div style="font-size:13px;color:var(--ink);margin-top:6px;">${escHtml(day.activity||day.morning||'')}</div>
+      ${day.tip ? `<div style="font-size:12px;color:var(--muted);margin-top:8px;padding:8px 10px;background:var(--cream);border-left:3px solid var(--gold);border-radius:0 6px 6px 0;font-style:italic;">${escHtml(day.tip)}</div>` : ''}
+    </div>`;
+  });
+  if (plan.food && plan.food.length) {
+    html += `<h3 style="font-family:var(--serif);color:var(--rust);margin-top:20px;margin-bottom:8px;">Must-try food</h3>`;
+    html += plan.food.map(f => `<span style="display:inline-block;background:var(--cream);border-radius:16px;padding:4px 12px;margin:3px;font-size:12px;">🍴 ${escHtml(f)}</span>`).join('');
+  }
+  if (plan.tips && plan.tips.length) {
+    html += `<h3 style="font-family:var(--serif);color:var(--rust);margin-top:20px;margin-bottom:8px;">Travel tips</h3>`;
+    html += '<ul style="padding-left:18px;">' + plan.tips.map(t => `<li style="font-size:13px;margin:4px 0;">${escHtml(t)}</li>`).join('') + '</ul>';
+  }
+  if (plan.best_season || plan.budget) {
+    html += `<p style="color:var(--muted);font-size:12px;margin-top:16px;">Best season: ${escHtml(plan.best_season||'—')} · Typical budget: ${escHtml(plan.budget||'—')}</p>`;
+  }
+  div.innerHTML = html;
+  return div;
+}
+
+function renderMarkdown(md) {
+  try {
+    if (typeof marked !== 'undefined') {
+      marked.setOptions({ gfm: true, breaks: false });
+      return marked.parse(md);
+    }
+  } catch (e) { console.warn('marked failed:', e); }
+  // Fallback: minimal escape + <br>
+  return '<pre style="white-space:pre-wrap;font-family:inherit;">' + escHtml(md) + '</pre>';
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────
 function escHtml(s) {
-  if (typeof s !== 'string') s = String(s || '');
+  if (typeof s !== 'string') s = String(s == null ? '' : s);
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-// ── Evaluation ─────────────────────────────────────────────────────────────
+// ── Evaluation (kept from Tiffany's UI) ───────────────────────────────────
 async function runEval() {
   const panel = document.getElementById('eval-panel');
   const btn = document.getElementById('eval-btn');
-  btn.textContent = '⏳ Running…';
-  btn.disabled = true;
-
+  btn.textContent = '⏳ Running…'; btn.disabled = true;
   try {
     const resp = await fetch('/evaluate', { method: 'POST' });
     const data = await resp.json();
     renderEval(data);
     panel.classList.add('show');
-  } catch(e) {
+  } catch (e) {
     alert('Evaluation failed: ' + e.message);
   } finally {
     btn.textContent = '📊 Run Evaluation';
@@ -649,11 +954,11 @@ async function runEval() {
 }
 
 function renderEval(data) {
-  const s = data.summary;
+  const s = data.summary || {};
   let html = '';
   for (const key of ['non_dl', 'dl']) {
     const label = key === 'dl' ? '✦ DL Agent' : '⚙ Non-DL Agent';
-    const d = s[key];
+    const d = s[key]; if (!d) continue;
     html += `<div style="margin-bottom:12px;">
       <div class="eval-row"><span class="lbl">${label}</span></div>
       <div class="eval-row"><span class="lbl">Region accuracy</span><span class="val">${(d.avg_accuracy_score*100).toFixed(0)}%</span></div>
@@ -666,6 +971,9 @@ function renderEval(data) {
   html += `<button onclick="document.getElementById('eval-panel').classList.remove('show')" style="background:none;border:1px solid rgba(255,255,255,0.15);color:rgba(255,255,255,0.5);padding:5px 12px;border-radius:6px;cursor:pointer;font-size:11px;margin-top:4px;">Close</button>`;
   document.getElementById('eval-content').innerHTML = html;
 }
+
+// ── Initial render ────────────────────────────────────────────────────────
+renderPanel();
 </script>
 </body>
 </html>

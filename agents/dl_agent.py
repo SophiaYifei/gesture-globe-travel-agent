@@ -248,6 +248,8 @@ class DLAgent:
 
     # ── CONTROL ────────────────────────────────────────────────────────────────
     def run(self, lat, lng, img_bytes=None, preferences=None, conversation_history=None):
+        """Legacy entrypoint — simple (lat, lng, preferences) call. Preserved
+        so Tiffany's old /plan path and any direct callers still work."""
         region_info = self.perceive(lat, lng, img_bytes)
         plan, updated_history = self.plan(region_info, preferences, conversation_history)
         return {
@@ -257,3 +259,71 @@ class DLAgent:
             "conversation_history": updated_history,
             "perception_method": region_info.get("perception_method", "CLIP"),
         }
+
+    # ── CONTROL (yifei) — trip-dict entrypoint for the new form flow ───────────
+    def run_trip(self, trip: dict, img_bytes=None):
+        """Drive a full itinerary from a trip dict (origin, destination, dates,
+        preferences). Mirrors the Project 1 Streamlit flow's `_build_user_message`
+        format so the ReAct agent sees exactly the shape it was tuned for.
+        """
+        region_info = self.perceive(trip.get("destination_lat"),
+                                    trip.get("destination_lng"),
+                                    img_bytes)
+        # Prefer the user-confirmed reverse-geocoded name over the biome-DB name —
+        # it's more specific (e.g. "Paris, Île-de-France, France" vs "France").
+        if trip.get("destination_name"):
+            region_info["name"] = trip["destination_name"]
+
+        user_message = self._build_user_message(trip)
+
+        try:
+            result = react_run_agent(user_message, REACT_SYSTEM_PROMPT)
+            markdown = result.get("response", "")
+            plan_data = {
+                "markdown": markdown,
+                "iterations": result.get("iterations", 0),
+                "num_tool_calls": len(result.get("tool_calls", [])),
+                "tools_used": [c.get("tool") for c in result.get("tool_calls", [])],
+                # Kept empty — frontend now renders `markdown` directly via marked.js.
+                "itinerary": [], "food": [], "tips": [], "highlights": [],
+                "best_season": "", "budget": "",
+            }
+        except Exception as e:
+            print(f"[DL Agent run_trip error] {e}")
+            plan_data = {
+                "markdown": f"### Planning failed\n\nThe ReAct agent errored out: `{e}`",
+                "iterations": 0,
+                "num_tool_calls": 0,
+                "tools_used": [],
+                "itinerary": [], "food": [], "tips": [], "highlights": [],
+                "best_season": "", "budget": "",
+            }
+
+        return {
+            "agent": "dl",
+            "region": region_info,
+            "plan": plan_data,
+            "conversation_history": [],
+            "perception_method": region_info.get("perception_method", "CLIP"),
+            "trip": trip,
+        }
+
+    @staticmethod
+    def _build_user_message(trip: dict) -> str:
+        """Mirrors Project 1's main.py `_build_user_message` so the system prompt
+        sees the exact field shape it expects."""
+        style = trip.get("travel_style") or []
+        style_str = ", ".join(style) if style else "general"
+        budget = trip.get("budget") or "Flexible - suggest what it would cost"
+        return (
+            "Plan a trip with the following details:\n"
+            f"- Destination: {trip.get('destination_name', 'Unknown')}\n"
+            f"- Dates: {trip.get('start_date', '')} to {trip.get('end_date', '')}\n"
+            f"- Number of travelers: {trip.get('num_people', 2)}\n"
+            f"- Group type: {trip.get('group_type', 'solo')}\n"
+            f"- Travel style: {style_str}\n"
+            f"- Transportation preference: {trip.get('transport', 'flight')}\n"
+            f"- Budget: {budget}\n"
+            f"- Origin city (for flights): {trip.get('origin_name', 'N/A')}\n"
+            f"- Additional requests: {trip.get('notes') or 'None'}\n"
+        )
