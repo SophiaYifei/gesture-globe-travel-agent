@@ -1,27 +1,33 @@
 """DL perception — MediaPipe Hand Landmarker + geometric gesture classifier.
 
-Gesture taxonomy (future globe control on the right):
-  rotate_left   → spin globe left    (open palm held vertical, fingers left 🫲)
-  rotate_right  → spin globe right   (open palm held vertical, fingers right 🫱)
-  zoom          → pan zoom           (open palm flat, fingers up 🖐️; palm_area
-                                      is the zoom signal — bigger = zoom in)
-  point         → aim (laser dot)    (only the index finger is extended)
-  fist          → confirm / stop     (no fingers extended)
-  none          → no hand detected, or ambiguous pose
+Gesture taxonomy (wired to globe control on the client):
+  pinch       → trackball rotate  (thumb tip touching index tip; the client
+                                    tracks the pinch midpoint frame-to-frame
+                                    and maps screen-space drag to camera
+                                    rotateLeft / rotateUp)
+  open_palm   → zoom              (4 non-thumb fingers extended; palm_area
+                                    maps through an exponential curve to
+                                    camera altitude — bigger palm = closer)
+  point       → laser + dwell     (only the index finger is extended; the
+                                    client renders a red dot and fires
+                                    `select` after a 2.5-second dwell)
+  fist        → lock view         (no fingers extended; treated as a hold —
+                                    the camera doesn't respond to anything)
+  none        → no hand detected, or ambiguous pose
 
-Note: "select" is NOT a classifier label — it's a state transition the client
-synthesizes when gesture goes from `point` → `fist`. The backend just emits
-the two raw states; the frontend pins a green marker at the last `index_tip`
-seen during `point` when it sees the edge into `fist`.
+`select` is NOT a classifier label — it's a state transition the client
+synthesizes when the dwell timer on `point` completes.
 
-Palm orientation is derived from the wrist → MIDDLE_MCP vector after the
-frontend mirrors the frame horizontally before POSTing — so image X matches
-the user's own left/right, and a 🫲 gesture produces dx<0 (rotate_left) as a
-user naturally expects.
+The frontend mirrors the webcam frame horizontally before POSTing, so image
+X matches the user's own left/right. That mattered when rotate_left/right
+were distinct labels; it's still done now because the same mirror keeps
+laser-dot movement in the natural direction.
 
-For the laser-pointer UI, detect() also returns `index_tip` — the normalized
-(x, y) of landmark 8 — but only when the index is the ONLY extended finger
-(i.e. the `point` pose). That keeps the red dot off during open_palm / fist.
+`detect()` surfaces two extra fields for the client:
+  * `index_tip`   — normalized (x, y) of landmark 8, only when the index is
+                    the ONLY extended finger (gates the laser dot).
+  * `pinch_point` — normalized midpoint of thumb tip and index tip, only
+                    when the pinch pose is detected (feeds the rotation drag).
 
 Uses MediaPipe's Tasks API (`mediapipe.tasks.python.vision.HandLandmarker`)
 since the old `mp.solutions.hands` module was removed in mediapipe 0.10.22+.
@@ -62,15 +68,15 @@ class MediaPipeHandDetector:
 
     `detect(img_bytes)` returns:
       {
-        "gesture": "rotate_left"|"rotate_right"|"zoom"|"point"|"fist"|"none",
+        "gesture": "pinch"|"open_palm"|"point"|"fist"|"none",
         "confidence": float,       # 0..1, coarse classifier margin
         "landmarks": [[x,y,z],..], # 21 points in normalized [0,1] image coords,
                                    # empty if no hand detected
         "handedness": "Left" | "Right" | null,
         "bbox": [xmin,ymin,xmax,ymax],  # normalized [0,1]; [] if no hand
         "palm_area": float,        # bbox area as fraction of frame, drives zoom
-        "index_tip": [x, y] | null, # normalized tip coords during `point`
-                                   #   (same gate as the laser-pointer dot)
+        "index_tip":   [x, y] | null,  # only when gesture == 'point'
+        "pinch_point": [x, y] | null,  # only when gesture == 'pinch'
       }
     """
 
@@ -112,7 +118,8 @@ class MediaPipeHandDetector:
         if not result.hand_landmarks:
             return {"gesture": "none", "confidence": 0.0,
                     "landmarks": [], "handedness": None,
-                    "bbox": [], "palm_area": 0.0, "index_tip": None}
+                    "bbox": [], "palm_area": 0.0,
+                    "index_tip": None, "pinch_point": None}
 
         # One hand max (num_hands=1)
         hand = result.hand_landmarks[0]
@@ -124,6 +131,12 @@ class MediaPipeHandDetector:
         gesture, confidence = classify_gesture(landmarks)
         bbox, palm_area = _compute_bbox(landmarks)
 
+        # Aux points for client-side interaction (gated by gesture label so
+        # the client can't accidentally drive globe rotation from a finger
+        # that wasn't classified as pinch).
+        index_tip = _index_tip_if_only_index(landmarks) if gesture == "point" else None
+        pinch_point = _pinch_midpoint(landmarks) if gesture == "pinch" else None
+
         return {
             "gesture": gesture,
             "confidence": round(float(confidence), 3),
@@ -131,7 +144,8 @@ class MediaPipeHandDetector:
             "handedness": handedness,
             "bbox": [round(v, 4) for v in bbox],
             "palm_area": round(float(palm_area), 4),
-            "index_tip": _index_tip_if_only_index(landmarks),
+            "index_tip": index_tip,
+            "pinch_point": pinch_point,
         }
 
     def close(self):
@@ -173,56 +187,54 @@ def _hand_scale(landmarks) -> float:
 def classify_gesture(landmarks: list[list[float]]) -> tuple[str, float]:
     """Return (label, confidence) for a set of 21 normalized landmarks.
 
-    Order: point → open_palm (→ rotate_left / rotate_right / zoom) → fist.
-    The frontend mirrors the webcam frame before POST, so image X matches the
-    user's own left/right. "select" is not a classifier label — the frontend
-    synthesizes it from a `point → fist` edge.
+    Order: pinch → point → open_palm → fist → none. Pinch comes first because
+    thumb+index-touching can co-occur with other fingers curled or partially
+    extended; the defining feature is the tip-to-tip distance, and we want
+    that to shadow the other branches.
     """
     if len(landmarks) != 21:
         return "none", 0.0
+
+    # Pinch — thumb tip and index tip close together (relative to hand scale).
+    # A real pinch has the other fingers curled, but natural hand poses vary
+    # and the tip-to-tip proximity alone is a strong enough signal.
+    pinch_d = _dist(landmarks[THUMB_TIP], landmarks[INDEX_TIP])
+    pinch_ratio = pinch_d / _hand_scale(landmarks)
+    if pinch_ratio < 0.35:
+        # Tighter pinch (smaller ratio) → higher confidence, floor 0.5.
+        conf = max(0.5, min(1.0, 1.0 - pinch_ratio / 0.35))
+        return "pinch", conf
 
     index = _finger_extended(landmarks, INDEX_TIP, INDEX_PIP)
     middle = _finger_extended(landmarks, MIDDLE_TIP, MIDDLE_PIP)
     ring = _finger_extended(landmarks, RING_TIP, RING_PIP)
     pinky = _finger_extended(landmarks, PINKY_TIP, PINKY_PIP)
 
-    # 1. Point — only the index finger is extended. No area/orientation gate:
-    #    the laser-pointer dot tracks the tip continuously while the user is
-    #    "aiming"; the frontend fires a select pin when the hand then closes
-    #    into a fist.
+    # Point — only the index finger is extended (thumb may or may not be).
     if index and not middle and not ring and not pinky:
         return "point", 0.9
 
-    # 2. Open palm — 4 non-thumb fingers extended. Direction of the hand axis
-    #    (wrist → MIDDLE_MCP) decides rotate_left / rotate_right / zoom.
-    #    In image coords y+ is down, so:
-    #      fingers up    → dy < 0, dx ≈ 0  → angle near −90°  → zoom
-    #      fingers right → dx > 0, dy ≈ 0  → angle near   0°  → rotate_right
-    #      fingers left  → dx < 0, dy ≈ 0  → angle near ±180° → rotate_left
-    #    Pointing down (angle 45–135°) is unused → "none".
+    # Open palm — 4 non-thumb fingers extended. Orientation no longer matters:
+    # rotation is driven by pinch-drag on the client, not palm direction.
     if index and middle and ring and pinky:
-        wrist = landmarks[WRIST]
-        mmcp = landmarks[MIDDLE_MCP]
-        dx = mmcp[0] - wrist[0]
-        dy = mmcp[1] - wrist[1]
-        angle = math.degrees(math.atan2(dy, dx))
-        if -135 <= angle <= -45:
-            return "zoom", 0.9
-        if -45 < angle <= 45:
-            return "rotate_right", 0.9
-        if angle > 135 or angle < -135:
-            return "rotate_left", 0.9
-        return "none", 0.0
+        return "open_palm", 0.9
 
-    # 3. Fist — none of the four non-thumb fingers extended. Thumb is ignored
-    #    because it varies a lot in a real fist (can curl in front of the
-    #    fingers or stick out sideways) and insisting on a strict thumb state
-    #    caused point→fist transitions to stall on an intermediate frame that
-    #    classified as "none" instead of "fist".
+    # Fist — none of the four non-thumb fingers extended. Thumb is ignored
+    # because it varies a lot in a real fist (can curl in front of the
+    # fingers or stick out sideways).
     if not index and not middle and not ring and not pinky:
         return "fist", 0.85
 
     return "none", 0.0
+
+
+def _pinch_midpoint(landmarks: list[list[float]]) -> list[float]:
+    """Midpoint of thumb tip and index tip, rounded to 4 decimal places.
+    Returned in normalized [0,1] image coords so the client can map it to
+    screen space with the same `_mapTipToScreen` it uses for the laser dot."""
+    t = landmarks[THUMB_TIP]
+    i = landmarks[INDEX_TIP]
+    return [round((t[0] + i[0]) / 2, 4), round((t[1] + i[1]) / 2, 4)]
 
 
 def _index_tip_if_only_index(landmarks: list[list[float]]) -> Optional[list[float]]:

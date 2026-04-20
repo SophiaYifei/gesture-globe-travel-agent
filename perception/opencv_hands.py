@@ -4,20 +4,28 @@ Returns the SAME dict shape as MediaPipeHandDetector so the /gesture endpoint
 can swap between detectors at runtime based on a `mode` parameter. No deep
 learning involved. Pipeline:
 
-    HSV skin threshold (two hue ranges for wraparound)
+    HSV ∩ YCrCb skin mask (two color spaces intersected for robustness)
         ↓
     Morphological open + close (denoise + fill palm gaps)
         ↓
-    findContours → take the largest blob as the hand
+    Haar face cascade punch-out (strip the user's face from the mask)
         ↓
-    Bounding box + centroid from image moments
+    findContours with hierarchy → largest outer contour is the hand;
+    inner contours (holes) are pinch-loop candidates
         ↓
-    Convex hull + convexityDefects → count finger valleys
+    Gesture classification from (defect count · aspect · solidity · top-
+    slice width · inner-hole presence) ↓
         ↓
-    Classify (finger count + bbox aspect + centroid offset) → gesture label
+    Temporal smoothing across the last 3 raw frames (majority vote)
 
 Gesture output matches the DL classifier's interface:
-    rotate_left / rotate_right / zoom / point / fist / none
+    pinch / open_palm / point / fist / none
+
+Pinch is detected via topology: when thumb and index touch they close a
+loop in the skin mask, and findContours with RETR_CCOMP surfaces an inner
+contour inside the hand outline. No such loop ⇒ not a pinch. This is the
+only way classical silhouette CV can catch a pinch reliably — MediaPipe
+just measures 3D landmark distance, which we don't have here.
 
 Known limitations (inherent to classical skin-CV):
   * Sensitive to lighting and skin tone — the HSV range is a one-size default.
@@ -145,15 +153,36 @@ class OpenCVHandDetector:
                 y2 = min(h, fy + fh + pad_h)
                 mask[y1:y2, x1:x2] = 0
 
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        if not contours:
+        # RETR_CCOMP gives us both outer contours (the hand) and inner contours
+        # (holes inside the hand, e.g. the loop formed by a pinch gesture).
+        # hierarchy[0][i] = [next, prev, first_child, parent]; parent != -1
+        # means it's an inner contour of contours[parent].
+        contours, hierarchy = cv2.findContours(mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours or hierarchy is None:
             return self._no_hand()
 
-        hand = max(contours, key=cv2.contourArea)
+        outer_idxs = [i for i in range(len(contours)) if hierarchy[0][i][3] == -1]
+        if not outer_idxs:
+            return self._no_hand()
+        hand_idx = max(outer_idxs, key=lambda i: cv2.contourArea(contours[i]))
+        hand = contours[hand_idx]
         area_px = cv2.contourArea(hand)
         frame_px = w * h
         if area_px < _MIN_CONTOUR_AREA_PX or area_px / frame_px > _MAX_CONTOUR_AREA_FRAC:
             return self._no_hand()
+
+        # Inner holes belonging to THIS outer contour. A pinch loop typically
+        # shows up as one medium-sized hole; we pick the largest.
+        inner_holes = [contours[i] for i in range(len(contours))
+                       if hierarchy[0][i][3] == hand_idx]
+        pinch_hole = None
+        if inner_holes:
+            biggest = max(inner_holes, key=cv2.contourArea)
+            hole_area = cv2.contourArea(biggest)
+            # Guard: hole must be substantial (absolute + relative to hand)
+            # or we'll pick up spurious morph artifacts as pinch.
+            if hole_area > 400 and hole_area / area_px > 0.02:
+                pinch_hole = biggest
 
         x, y, bw, bh = cv2.boundingRect(hand)
         bbox_norm = [x / w, y / h, (x + bw) / w, (y + bh) / h]
@@ -196,13 +225,25 @@ class OpenCVHandDetector:
         else:
             top_width_ratio = 1.0
 
-        raw_gesture, confidence = _classify(
-            fingers, bw, bh, cx, x, solidity, top_width_ratio
-        )
+        # Pinch overrides the aspect-based classifier — if the mask has a
+        # closed loop inside the hand contour, that's a pinch pose regardless
+        # of what the outer shape looks like.
+        pinch_point = None
+        if pinch_hole is not None:
+            raw_gesture = "pinch"
+            confidence = 0.85
+            pm = cv2.moments(pinch_hole)
+            if pm["m00"] > 0:
+                pcx = pm["m10"] / pm["m00"]
+                pcy = pm["m01"] / pm["m00"]
+                pinch_point = [round(pcx / w, 4), round(pcy / h, 4)]
+        else:
+            raw_gesture, confidence = _classify(
+                fingers, bw, bh, solidity, top_width_ratio
+            )
 
         # Temporal smoothing: return the majority of the last N raw labels.
-        # Eats 1-frame classifier flickers. The frontend's POINT_COMMIT_FRAMES
-        # gate then adds another layer of sustained-pose confirmation.
+        # Eats 1-frame classifier flickers.
         self._history.append(raw_gesture)
         vote = Counter(self._history).most_common(1)[0]
         # Only accept the smoothed label if it's a strict majority. Otherwise
@@ -229,6 +270,7 @@ class OpenCVHandDetector:
             "bbox": [round(v, 4) for v in bbox_norm],
             "palm_area": round(float(palm_area), 4),
             "index_tip": index_tip,
+            "pinch_point": pinch_point,
             # Debug payload — useful when diagnosing "why did it say X" in
             # the browser DevTools Network tab. Cheap to include.
             "debug": {
@@ -249,7 +291,8 @@ class OpenCVHandDetector:
         out = {
             "gesture": "none", "confidence": 0.0,
             "landmarks": [], "handedness": None,
-            "bbox": [], "palm_area": 0.0, "index_tip": None,
+            "bbox": [], "palm_area": 0.0,
+            "index_tip": None, "pinch_point": None,
         }
         if error:
             out["error"] = error
@@ -297,13 +340,17 @@ def _count_fingers_via_defects(contour, min_depth_fixed: int) -> int:
 
 
 def _classify(defects_count: int, bw: int, bh: int,
-              cx: float, bbox_x: int,
               solidity: float,
               top_width_ratio: float) -> tuple[str, float]:
-    """Map (defect count, bbox shape, centroid offset, solidity,
-    top-slice width) → gesture.
+    """Map (defect count, bbox shape, solidity, top-slice width) → gesture.
 
-    Aspect-first framework; solidity and defects are confidence/safety gates:
+    Pinch is NOT classified here — it's detected upstream by looking for a
+    closed hole inside the hand contour. This classifier only sees the
+    outer-shape features of non-pinch hands. The old rotate_left /
+    rotate_right / zoom labels (which all came from "elongated open palm in
+    some orientation") are collapsed into a single `open_palm` label here;
+    rotation is now driven by pinch-drag on the client instead of by palm
+    orientation, so the classifier no longer has to guess direction.
 
         aspect = bh / bw
         width_ratio = bw / bh
@@ -311,42 +358,27 @@ def _classify(defects_count: int, bw: int, bh: int,
         ┌─────────────────────────────────────────────────────────┐
         │ aspect > 1.5 AND (w/h < 0.30 OR top_width_ratio < 0.40) │
         │                                             → point     │
-        │ aspect > 1.3                                → zoom       │
-        │ aspect < 0.80                               → rotate_*   │
-        │ 0.80 ≤ aspect ≤ 1.25 AND sol > 0.85         → fist       │
-        │ otherwise                                   → none       │
+        │ aspect > 1.3  OR  aspect < 0.80             → open_palm │
+        │ 0.80 ≤ aspect ≤ 1.25 AND sol > 0.85         → fist      │
+        │ otherwise                                   → none      │
         └─────────────────────────────────────────────────────────┘
-
-    `top_width_ratio` is the fix for "☝️ palm + raised index finger" —
-    overall width_ratio stays high (palm widens the bbox), but only the
-    finger occupies the top quarter so its width is narrow. A palm with
-    fingers together/spread has ~uniform width top-to-bottom, so the top
-    slice spans most of the bbox and stays in the zoom branch.
     """
     aspect = bh / max(bw, 1)
-    bbox_cx = bbox_x + bw / 2
     width_ratio = bw / max(bh, 1)
     finger_valleys_visible = defects_count >= 2
 
-    # 1. Point — either the whole blob is narrow (isolated finger) OR just
-    #    the top slice is narrow (finger protruding from a wider palm).
+    # Point — either the whole blob is narrow (isolated finger) OR just
+    # the top slice is narrow (finger protruding from a wider palm).
     if aspect > 1.5 and (width_ratio < 0.30 or top_width_ratio < 0.40):
         return "point", 0.70
 
-    # 2. Zoom — palm held vertical, fingers up. Same test regardless of
-    #    whether fingers are spread or together; defects just ups confidence.
-    if aspect > 1.3:
-        return "zoom", 0.85 if finger_valleys_visible else 0.60
+    # Open palm — any clearly elongated silhouette, vertical or horizontal.
+    # Defects-visible gets higher confidence; fingers-together (no defects)
+    # still qualifies but at lower confidence.
+    if aspect > 1.3 or aspect < 0.80:
+        return "open_palm", 0.85 if finger_valleys_visible else 0.65
 
-    # 3. Rotate — palm held horizontal. Direction from centroid offset:
-    #    palm is the dense half of the silhouette, so centroid biases toward
-    #    the palm. Centroid right of bbox center ⇒ fingertips point LEFT.
-    if aspect < 0.80:
-        label = "rotate_left" if cx > bbox_cx else "rotate_right"
-        return label, 0.85 if finger_valleys_visible else 0.60
-
-    # 4. Fist — near-square, solid, compact. Solidity floor is what stops a
-    #    near-square palm shadow from being read as a fist.
+    # Fist — near-square, solid, compact.
     if 0.80 <= aspect <= 1.25 and solidity > 0.85:
         return "fist", 0.80
 

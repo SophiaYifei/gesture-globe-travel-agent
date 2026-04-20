@@ -6,8 +6,15 @@
 <title>WanderMind — AI Vacation Planner</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<!-- CesiumJS drives the 3D earth. We use OpenStreetMap tiles (via
+     OpenStreetMapImageryProvider) so the sphere actually shows city names,
+     roads, and national borders at zoom — Globe.gl's static equirectangular
+     texture was a photographic blur at any useful level. CESIUM_BASE_URL
+     must be set before Cesium.js loads so its Web Worker assets resolve.
+     html2canvas kept for the legacy Tiffany flow; marked.js renders markdown. -->
+<script>window.CESIUM_BASE_URL = 'https://unpkg.com/cesium@1.122/Build/Cesium/';</script>
+<script src="https://unpkg.com/cesium@1.122/Build/Cesium/Cesium.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/cesium@1.122/Build/Cesium/Widgets/widgets.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <style>
@@ -32,8 +39,13 @@
 
   /* ── Layout ── */
   #app { display: flex; height: 100vh; position: relative; }
-  #map-container { flex: 1; position: relative; }
-  #map { width: 100%; height: 100%; }
+  /* overflow:hidden is critical — Globe.gl defaults its canvas to the host
+     element's client size, and if it ever overshoots it must be clipped so
+     the side panel isn't covered. */
+  #map-container { flex: 1; position: relative; overflow: hidden; min-width: 0; }
+  #map { position: absolute; inset: 0; width: 100%; height: 100%; }
+  #map canvas { position: absolute !important; top: 0 !important; left: 0 !important;
+                 max-width: 100% !important; max-height: 100% !important; }
 
   /* ── Top bar ── */
   #topbar {
@@ -84,6 +96,26 @@
   }
   @keyframes pulse-dot {
     0%,100% { opacity: 0.3; } 50% { opacity: 1; }
+  }
+
+  /* ── Resizable divider between map and panel ── */
+  #panel-resize-handle {
+    width: 6px; flex-shrink: 0; cursor: col-resize;
+    background: transparent;
+    border-left: 1px solid var(--border);
+    transition: background 0.15s;
+    position: relative; z-index: 950;
+  }
+  #panel-resize-handle:hover,
+  #panel-resize-handle.dragging { background: rgba(196, 82, 42, 0.35); }
+  /* Grip dots to signal "you can drag me" */
+  #panel-resize-handle::after {
+    content: ''; position: absolute; left: 50%; top: 50%;
+    width: 2px; height: 28px;
+    transform: translate(-50%, -50%);
+    background: repeating-linear-gradient(to bottom,
+      rgba(26,23,20,0.35) 0 3px, transparent 3px 6px);
+    border-radius: 1px;
   }
 
   /* ── Side panel ── */
@@ -315,22 +347,12 @@
   }
   #eval-btn:hover { color: #fff; }
 
-  /* ── Map pins ── */
-  .map-pin {
-    width: 28px; height: 28px; border-radius: 50% 50% 50% 0;
-    transform: rotate(-45deg); border: 3px solid #fff;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.35);
-  }
-  .map-pin.origin-pin  { background: var(--sky); }
-  .map-pin.dest-pin    { background: var(--rust); }
-  .map-pin.pending-pin {
-    background: var(--gold);
-    animation: pulse-pin 1.4s ease-in-out infinite;
-  }
-  @keyframes pulse-pin {
-    0%, 100% { box-shadow: 0 2px 8px rgba(0,0,0,0.35), 0 0 0 0 rgba(201,168,76,0.6); }
-    50%      { box-shadow: 0 2px 8px rgba(0,0,0,0.35), 0 0 0 10px rgba(201,168,76,0); }
-  }
+  /* ── Cesium container ── */
+  /* Cesium injects its own widget DOM into #map: .cesium-viewer, credit
+     overlays, etc. We've disabled most widgets in JS, but still scope the
+     credit container out of view so it doesn't cover the southwest corner. */
+  #map .cesium-widget-credits,
+  #map .cesium-viewer-bottom { display: none !important; }
 
   /* ── Responsive ── */
   @media (max-width: 760px) {
@@ -338,10 +360,6 @@
     #panel { position: absolute; top: 0; right: 0; height: 100%; z-index: 800; }
     #agent-toggle { right: 16px; }
   }
-
-  /* ── Leaflet overrides ── */
-  .leaflet-container { font-family: var(--sans); cursor: crosshair !important; }
-  .leaflet-control-attribution { font-size: 9px; }
 
   /* ── Gesture camera (top-left) ── */
   #gesture-toggle {
@@ -445,6 +463,56 @@
   }
   #laser-dot.active { display: block; }
 
+  /* Dwell progress ring — fills from 0° to 360° over the dwell window.
+     Ring is centered on the current laser dot; if the user's finger drifts
+     outside the tolerance radius, the ring angle resets to 0°. */
+  #dwell-ring {
+    position: fixed; left: 0; top: 0;
+    width: 48px; height: 48px; border-radius: 50%;
+    pointer-events: none; z-index: 948;
+    display: none;
+    will-change: transform;
+    background: conic-gradient(
+      rgba(50, 210, 120, 0.9) var(--dwell-angle, 0deg),
+      rgba(255, 255, 255, 0.14) 0
+    );
+    -webkit-mask: radial-gradient(closest-side, transparent 62%, black 64%);
+            mask: radial-gradient(closest-side, transparent 62%, black 64%);
+    transition: transform 0.12s linear;
+  }
+  #dwell-ring.active { display: block; }
+
+  /* Palm-hold ring — appears in the center of the map while the user is
+     holding an open_palm to engage zoom. The conic-gradient arc fills from
+     0° to 360° over OPEN_PALM_HOLD_MS (2 s); inner hole is see-through. */
+  #palm-hold-ring {
+    position: fixed; top: 50%; left: 50%;
+    width: 140px; height: 140px; border-radius: 50%;
+    transform: translate(-50%, -50%);
+    pointer-events: none; z-index: 945;
+    display: none;
+    background: conic-gradient(
+      rgba(58, 124, 165, 0.9) var(--palm-hold-angle, 0deg),
+      rgba(255, 255, 255, 0.08) 0
+    );
+    -webkit-mask: radial-gradient(closest-side, transparent 74%, black 76%);
+            mask: radial-gradient(closest-side, transparent 74%, black 76%);
+  }
+  #palm-hold-ring.active { display: block; }
+  /* Label is a sibling of the ring (not a descendant) so the ring's mask
+     doesn't eat the text. */
+  #palm-hold-label {
+    position: fixed; top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    color: #fff;
+    font: 600 12px 'DM Sans', system-ui, sans-serif;
+    letter-spacing: 0.15em; text-transform: uppercase;
+    text-shadow: 0 2px 6px rgba(0, 0, 0, 0.7);
+    pointer-events: none; z-index: 946;
+    display: none;
+  }
+  #palm-hold-label.active { display: block; }
+
   .select-pin {
     position: fixed; left: 0; top: 0;
     width: 18px; height: 18px; border-radius: 50%;
@@ -454,18 +522,28 @@
     border: 2px solid rgba(255,255,255,0.75);
     box-shadow: 0 0 12px rgba(50,210,120,0.5);
     pointer-events: none; z-index: 949;
-    animation: select-pulse 0.5s ease-out;
+    animation: select-flash-fade 0.75s ease-out forwards;
   }
-  @keyframes select-pulse {
-    0%   { transform: translate(var(--x), var(--y)) scale(2.2); opacity: 0.4; }
-    100% { transform: translate(var(--x), var(--y)) scale(1);   opacity: 1;   }
+  /* Pulse in, then shrink and fade away — the persistent pin becomes a
+     blue/orange Globe.gl point on the sphere, not an HTML overlay. */
+  @keyframes select-flash-fade {
+    0%   { transform: translate(var(--x), var(--y)) scale(2.4); opacity: 0.5; }
+    25%  { transform: translate(var(--x), var(--y)) scale(1.0); opacity: 1.0; }
+    100% { transform: translate(var(--x), var(--y)) scale(0.4); opacity: 0.0; }
   }
 </style>
 </head>
 <body>
 <div id="app">
-  <!-- Laser pointer (fixed-position, floats over everything while gesturing) -->
+  <!-- Laser pointer + dwell progress ring (both fixed-position overlays) -->
+  <div id="dwell-ring"></div>
   <div id="laser-dot"></div>
+
+  <!-- Palm-hold progress ring + label, shown while user is holding an
+       open_palm to engage zoom. Sibling elements because CSS `mask` on
+       #palm-hold-ring would otherwise clip the text inside it. -->
+  <div id="palm-hold-ring"></div>
+  <div id="palm-hold-label">HOLD TO ZOOM</div>
 
   <!-- Map -->
   <div id="map-container">
@@ -517,6 +595,9 @@
       </div>
     </div>
   </div>
+
+  <!-- Drag handle: user can resize the side panel horizontally -->
+  <div id="panel-resize-handle" title="Drag to resize"></div>
 
   <!-- Side panel — always visible; body content swaps by phase -->
   <div id="panel">
@@ -607,57 +688,248 @@ let pendingPick = null;   // {name, lat, lng, marker, loading}
 let currentResult = null;
 let formState = null;     // {start_date, end_date, num_people, group_type, transport, travel_style[], budget, notes}
 
-// ── Map init ──────────────────────────────────────────────────────────────
-const map = L.map('map', {
-  center: [25, 10], zoom: 3,
-  zoomControl: true, attributionControl: true,
+// ── Cesium init ───────────────────────────────────────────────────────────
+// OpenStreetMap tiles so the sphere carries real data (city names, roads,
+// borders) at any zoom. Cesium also gives us true screen-space ray-casting
+// against the ellipsoid, which we need for gesture-tip → lat/lng projection.
+// Widgets (timeline / animation / geocoder / ...) are all turned off —
+// this is a full-screen globe for picking points, not a GIS inspector.
+const PIN_COLOR = { origin: '#3a7ca5', dest: '#c4522a', pending: '#c9a84c' };
+const PIN_LABEL = { origin: 'Origin',  dest: 'Destination',  pending: 'Selecting' };
+
+// OSM is a free provider; silence Cesium's Ion warning by zeroing the token.
+if (Cesium.Ion && Cesium.Ion.defaultAccessToken !== undefined) {
+  Cesium.Ion.defaultAccessToken = '';
+}
+
+const mapEl = document.getElementById('map');
+const viewer = new Cesium.Viewer(mapEl, {
+  baseLayerPicker: false,
+  geocoder: false,
+  timeline: false,
+  animation: false,
+  fullscreenButton: false,
+  homeButton: false,
+  sceneModePicker: false,
+  navigationHelpButton: false,
+  infoBox: false,
+  selectionIndicator: false,
 });
-L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-  attribution: '© OpenStreetMap contributors © CARTO',
-  subdomains: 'abcd', maxZoom: 19,
-}).addTo(map);
+// Kill the default Ion-hosted Bing imagery layer (it requires a valid Ion
+// access token and renders black when we zero the token) and swap in OSM
+// via the generic UrlTemplateImageryProvider. UrlTemplate is synchronous
+// and CORS-friendly — no Promise-timing hazards like ImageryLayer.fromProviderAsync.
+viewer.imageryLayers.removeAll();
+viewer.imageryLayers.addImageryProvider(new Cesium.UrlTemplateImageryProvider({
+  url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+  credit: new Cesium.Credit('© OpenStreetMap contributors', true),
+  maximumLevel: 19,
+}));
+// Hide the bottom-right credit overlay (attribution is still carried in the
+// Credit object above so we don't strip it outright).
+viewer.cesiumWidget.creditContainer.style.display = 'none';
 
-const originIcon  = L.divIcon({ className: '', html: '<div class="map-pin origin-pin"></div>',  iconSize: [28,28], iconAnchor: [14,28] });
-const destIcon    = L.divIcon({ className: '', html: '<div class="map-pin dest-pin"></div>',    iconSize: [28,28], iconAnchor: [14,28] });
-const pendingIcon = L.divIcon({ className: '', html: '<div class="map-pin pending-pin"></div>', iconSize: [28,28], iconAnchor: [14,28] });
+// Initial camera: looking at the old world, ~15,000 km up (zoomed out).
+viewer.camera.setView({
+  destination: Cesium.Cartesian3.fromDegrees(10, 25, 15000000),
+});
 
-map.on('click', async (e) => {
+// Click → lat/lng via ray/ellipsoid intersection.
+const _cesiumClickHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+_cesiumClickHandler.setInputAction((evt) => {
+  const cart3 = viewer.camera.pickEllipsoid(evt.position, viewer.scene.globe.ellipsoid);
+  if (!cart3) return;
+  const cart = Cesium.Cartographic.fromCartesian(cart3);
+  handleMapClick(
+    Cesium.Math.toDegrees(cart.latitude),
+    Cesium.Math.toDegrees(cart.longitude)
+  );
+}, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+
+// Keep Cesium sized to the container on window resize (viewer.resize detects).
+window.addEventListener('resize', () => viewer.resize());
+
+function markerData() {
+  const out = [];
+  if (origin)      out.push({ lat: origin.lat,      lng: origin.lng,      color: PIN_COLOR.origin,  kind: 'origin' });
+  if (destination) out.push({ lat: destination.lat, lng: destination.lng, color: PIN_COLOR.dest,    kind: 'dest' });
+  if (pendingPick) out.push({ lat: pendingPick.lat, lng: pendingPick.lng, color: PIN_COLOR.pending, kind: 'pending' });
+  return out;
+}
+function refreshMarkers() {
+  viewer.entities.removeAll();
+  for (const m of markerData()) {
+    viewer.entities.add({
+      position: Cesium.Cartesian3.fromDegrees(m.lng, m.lat),
+      point: {
+        pixelSize: 14,
+        color: Cesium.Color.fromCssColorString(m.color),
+        outlineColor: Cesium.Color.WHITE,
+        outlineWidth: 2,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+      },
+      label: {
+        text: PIN_LABEL[m.kind] || m.kind,
+        font: '600 11px "DM Sans", system-ui, sans-serif',
+        fillColor: Cesium.Color.WHITE,
+        outlineColor: Cesium.Color.fromCssColorString('rgba(26,23,20,0.9)'),
+        outlineWidth: 3,
+        style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+        pixelOffset: new Cesium.Cartesian2(0, -22),
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+      },
+    });
+  }
+}
+
+async function handleMapClick(lat, lng) {
   if (phase !== 'PICK_ORIGIN' && phase !== 'PICK_DEST') return;
 
-  const { lat, lng } = e.latlng;
-
-  // Remove any previous pending marker
-  if (pendingPick && pendingPick.marker) map.removeLayer(pendingPick.marker);
-
-  const marker = L.marker([lat, lng], { icon: pendingIcon }).addTo(map);
-  pendingPick = { lat, lng, marker, name: null, loading: true };
+  pendingPick = { lat, lng, name: null, loading: true };
   phase = (phase === 'PICK_ORIGIN') ? 'CONFIRM_ORIGIN' : 'CONFIRM_DEST';
+  refreshMarkers();
   renderPanel();
 
   try {
-    const name = await reverseGeocode(lat, lng);
-    pendingPick.name = name;
+    const geo = await reverseGeocode(lat, lng);
+    // The geocoder can snap coordinates to a nearby city's center so the
+    // downstream ReAct agent plans for that city rather than a random
+    // surrounding point. Update the pin position when that happens.
+    pendingPick.name = geo.name;
+    pendingPick.lat = geo.lat;
+    pendingPick.lng = geo.lng;
+    refreshMarkers();
   } catch (err) {
     console.warn('Nominatim failed:', err);
     pendingPick.name = `(${lat.toFixed(2)}°, ${lng.toFixed(2)}°)`;
   }
   pendingPick.loading = false;
   renderPanel();
-});
+}
 
-// ── Reverse geocoding (Nominatim) ─────────────────────────────────────────
-async function reverseGeocode(lat, lng) {
-  const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}&zoom=10&addressdetails=1`;
+// ── Reverse geocoding (Nominatim + Overpass fallback) ─────────────────────
+// For travel planning we want a CITY, not a county or a tiny town. Two-stage
+// resolution:
+//   1. Nominatim reverse → if the click lands inside a city/town/village,
+//      use that name and keep the click's raw lat/lng.
+//   2. Otherwise, Overpass returns all place=city|town|village within 100 km.
+//      We prefer a nearby city to a closer town (within 2.5× tolerance) —
+//      this stops a rural click between Raleigh and a small suburb from
+//      resolving to the suburb just because the click was literally 15 km
+//      closer. When we pick a city confidently, we SNAP the pin to the
+//      city's own coordinates so the ReAct agent plans a trip to the city
+//      center, not to the random point the user happened to click on.
+//
+// Returns { name, lat, lng }. Callers should use the returned lat/lng (may
+// differ from the click if snapping happened) so the pin lines up.
+async function reverseGeocode(clickLat, clickLng) {
+  const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${clickLat}&lon=${clickLng}&zoom=10&addressdetails=1`;
   const resp = await fetch(url, { headers: { 'Accept-Language': 'en' } });
   if (!resp.ok) throw new Error(`Nominatim HTTP ${resp.status}`);
   const data = await resp.json();
   const a = data.address || {};
-  const city = a.city || a.town || a.village || a.hamlet || a.municipality || a.county || a.state;
-  const parts = [city, a.state, a.country].filter(Boolean);
-  const uniq = [...new Set(parts)];
-  if (uniq.length) return uniq.join(', ');
-  if (data.display_name) return data.display_name.split(',').slice(0, 3).join(',').trim();
-  return `(${lat.toFixed(2)}°, ${lng.toFixed(2)}°)`;
+  const state = a.state || a.region || '';
+  const country = a.country || '';
+
+  // 1. Nominatim found a populated place at the click — trust it, no snap.
+  const populated = a.city || a.town || a.village || a.hamlet
+                 || a.suburb || a.municipality;
+  if (populated) {
+    return {
+      name: _joinUniq([populated, state, country]),
+      lat: clickLat,
+      lng: clickLng,
+    };
+  }
+
+  // 2. Overpass: nearby city/town/village ranked by distance.
+  const nearby = await _overpassNearbyPlaces(clickLat, clickLng);
+  if (nearby && nearby.length) {
+    const cities = nearby.filter((p) => p.place === 'city');
+    const towns  = nearby.filter((p) => p.place === 'town' || p.place === 'village');
+    const nearestCity = cities[0];
+    const nearestTown = towns[0];
+    // If a nearby city exists within 2.5× the distance of the nearest
+    // town, pick the city — that's what the user usually meant by clicking
+    // around that part of the map (city labels dominate visual attention).
+    let pick = null;
+    if (nearestCity && nearestTown) {
+      pick = (nearestCity.distKm <= nearestTown.distKm * 2.5) ? nearestCity : nearestTown;
+    } else {
+      pick = nearestCity || nearestTown;
+    }
+    if (pick) {
+      // Confident match → snap the pin to the place's own coordinates and
+      // label with the bare name. Loose match (a small town far from the
+      // click) → keep the click coords and prefix with "near".
+      const confident = (pick.place === 'city') || (pick.distKm < 15);
+      return {
+        name: _joinUniq([confident ? pick.name : 'near ' + pick.name, state, country]),
+        lat: confident ? pick.lat : clickLat,
+        lng: confident ? pick.lng : clickLng,
+      };
+    }
+  }
+
+  // 3. Last-ditch administrative fallback (ocean, antarctica, Overpass down).
+  const admin = a.county || state;
+  if (admin) {
+    return { name: _joinUniq([admin, country]), lat: clickLat, lng: clickLng };
+  }
+  if (data.display_name) {
+    return {
+      name: data.display_name.split(',').slice(0, 3).join(',').trim(),
+      lat: clickLat, lng: clickLng,
+    };
+  }
+  return {
+    name: `(${clickLat.toFixed(2)}°, ${clickLng.toFixed(2)}°)`,
+    lat: clickLat, lng: clickLng,
+  };
+}
+
+function _joinUniq(parts) {
+  return parts.filter(Boolean)
+    .filter((s, i, arr) => arr.indexOf(s) === i)
+    .join(', ');
+}
+
+async function _overpassNearbyPlaces(lat, lng, radiusKm = 100) {
+  // Query Overpass for place=city|town|village within radius. Using degree²
+  // (Euclidean in deg) is fine at this scale for ranking — good enough to
+  // resolve "Raleigh vs Knightdale" without pulling a haversine dep.
+  const r = Math.round(radiusKm * 1000);
+  const query = `[out:json][timeout:6];
+    (node(around:${r},${lat},${lng})["place"~"^(city|town|village)$"]["name"];);
+    out body qt;`;
+  try {
+    const resp = await fetch('https://overpass-api.de/api/interpreter', {
+      method: 'POST',
+      body: 'data=' + encodeURIComponent(query),
+    });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    const out = [];
+    for (const el of (data.elements || [])) {
+      if (!el.tags || !el.tags.name) continue;
+      const dLat = el.lat - lat;
+      const dLng = el.lon - lng;
+      // 1° ≈ 111 km — rough but consistent across candidates; only used
+      // for ranking, so ignoring the cos(lat) correction on lng is fine.
+      const distKm = Math.sqrt(dLat * dLat + dLng * dLng) * 111;
+      out.push({
+        name: el.tags.name,
+        place: el.tags.place,  // 'city' | 'town' | 'village'
+        lat: el.lat,
+        lng: el.lon,
+        distKm,
+      });
+    }
+    out.sort((a, b) => a.distKm - b.distKm);
+    return out;
+  } catch (_err) {
+    return null;
+  }
 }
 
 // ── Agent toggle ──────────────────────────────────────────────────────────
@@ -672,10 +944,11 @@ function setAgent(type) {
 }
 
 // ── Confirm / cancel / reset ─────────────────────────────────────────────
+// Pin lifecycle is data-driven now: mutate origin / destination / pendingPick
+// then call refreshMarkers(), which rebuilds viewer.entities from that state.
 function confirmPick() {
   if (!pendingPick) return;
   const isOrigin = (phase === 'CONFIRM_ORIGIN');
-  pendingPick.marker.setIcon(isOrigin ? originIcon : destIcon);
   if (isOrigin) {
     origin = pendingPick;
     phase = 'PICK_DEST';
@@ -685,23 +958,22 @@ function confirmPick() {
     ensureFormDefaults();
   }
   pendingPick = null;
+  refreshMarkers();
   renderPanel();
 }
 
 function cancelPick() {
-  if (pendingPick && pendingPick.marker) map.removeLayer(pendingPick.marker);
   pendingPick = null;
   phase = (phase === 'CONFIRM_ORIGIN') ? 'PICK_ORIGIN' : 'PICK_DEST';
+  refreshMarkers();
   renderPanel();
 }
 
 function resetAll() {
-  for (const p of [origin, destination, pendingPick]) {
-    if (p && p.marker) map.removeLayer(p.marker);
-  }
   origin = null; destination = null; pendingPick = null;
   currentResult = null; formState = null;
   phase = 'PICK_ORIGIN';
+  refreshMarkers();
   renderPanel();
 }
 
@@ -1015,6 +1287,19 @@ function renderResultBody() {
   }
   wrap.appendChild(body);
 
+  // Export buttons — Markdown preserves all the Google Maps links verbatim,
+  // HTML wraps them in a standalone page with basic typography so the user
+  // can share the itinerary without having to serve the whole app.
+  if (markdown || (plan.itinerary && plan.itinerary.length)) {
+    const exportRow = document.createElement('div');
+    exportRow.style.cssText = 'display:flex; gap:8px; margin-top:20px; padding-top:16px; border-top:1px solid var(--border);';
+    exportRow.innerHTML = `
+      <button class="btn-secondary" onclick="downloadItinerary('md')" style="flex:1;">⬇ Download Markdown</button>
+      <button class="btn-secondary" onclick="downloadItinerary('html')" style="flex:1;">⬇ Download HTML</button>
+    `;
+    wrap.appendChild(exportRow);
+  }
+
   // Agent details expander
   const details = document.createElement('details');
   details.className = 'agent-details';
@@ -1031,6 +1316,121 @@ function renderResultBody() {
   wrap.appendChild(details);
 
   return wrap;
+}
+
+// ── Itinerary export ─────────────────────────────────────────────────────
+// Downloads the current plan as either a raw Markdown file (preserves the
+// ReAct agent's `[Place](https://maps.google.com/…)` links verbatim) or a
+// self-contained HTML page for easy sharing / opening in a browser.
+function downloadItinerary(format) {
+  const r = currentResult || {};
+  const plan = r.plan || {};
+  const markdown = plan.markdown || _structuredPlanToMarkdown(plan, r.region);
+  if (!markdown) { alert('Nothing to export yet.'); return; }
+
+  const routeTag = _exportRouteSlug();
+  const fname = `itinerary_${routeTag}.${format}`;
+  const mime = format === 'md' ? 'text/markdown' : 'text/html';
+  const payload = format === 'md'
+    ? _buildMarkdownExport(markdown)
+    : _buildHtmlExport(markdown);
+
+  const blob = new Blob([payload], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fname;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 500);
+}
+
+function _exportRouteSlug() {
+  const src = (origin && origin.name) ? origin.name.split(',')[0] : 'origin';
+  const dst = (destination && destination.name) ? destination.name.split(',')[0] : 'destination';
+  const clean = (s) => s.replace(/[^A-Za-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 40) || 'trip';
+  return `${clean(src)}_to_${clean(dst)}`;
+}
+
+function _buildMarkdownExport(markdown) {
+  const header = [
+    `# Travel Itinerary — ${origin?.name || '?'} → ${destination?.name || '?'}`,
+    ``,
+    `_Generated by WanderMind on ${new Date().toISOString().slice(0, 10)}_  `,
+    `_${formState?.start_date || ''} → ${formState?.end_date || ''} · ` +
+      `${formState?.num_people || '?'} ${formState?.num_people == 1 ? 'traveler' : 'travelers'} · ` +
+      `${formState?.group_type || ''}_`,
+    ``,
+    `---`,
+    ``,
+  ].join('\n');
+  return header + markdown + '\n';
+}
+
+function _buildHtmlExport(markdown) {
+  const body = (typeof marked !== 'undefined')
+    ? marked.parse(markdown)
+    : `<pre>${escHtml(markdown)}</pre>`;
+  const title = `${origin?.name || '?'} → ${destination?.name || '?'}`;
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Itinerary — ${escHtml(title)}</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+         max-width: 820px; margin: 2rem auto; padding: 0 1.5rem;
+         line-height: 1.65; color: #222; }
+  h1, h2, h3 { font-family: Georgia, serif; color: #2c3e50; }
+  h1 { border-bottom: 2px solid #c4522a; padding-bottom: 0.3rem; font-size: 1.9rem; }
+  h2 { margin-top: 2rem; font-size: 1.35rem; }
+  h3 { margin-top: 1.5rem; font-size: 1.1rem; color: #c4522a; }
+  a { color: #c4522a; text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  a:hover { color: #a84020; }
+  table { border-collapse: collapse; margin: 1rem 0; width: 100%; font-size: 0.95rem; }
+  th, td { border: 1px solid #ddd; padding: 0.5rem 0.8rem; text-align: left; }
+  th { background: #f5f5f5; font-weight: 600; }
+  blockquote { border-left: 3px solid #c9a84c; padding: 0.5rem 1rem;
+               background: #f8f4ee; margin: 1rem 0; font-style: italic; color: #5d4500; }
+  code { background: #f5f5f5; padding: 1px 5px; border-radius: 3px;
+         font-family: ui-monospace, monospace; font-size: 0.9em; }
+  .meta { color: #888; font-size: 0.9rem; margin-bottom: 1.5rem; }
+  hr { border: 0; border-top: 1px solid #eee; margin: 1.5rem 0; }
+</style>
+</head>
+<body>
+<h1>${escHtml(title)}</h1>
+<p class="meta">Generated by WanderMind on ${new Date().toLocaleDateString()} · ${escHtml(formState?.start_date || '')} → ${escHtml(formState?.end_date || '')} · ${formState?.num_people || '?'} ${formState?.num_people == 1 ? 'traveler' : 'travelers'} · ${escHtml(formState?.group_type || '')}</p>
+<hr>
+${body}
+</body>
+</html>`;
+}
+
+function _structuredPlanToMarkdown(plan, region) {
+  // Fallback serializer for non-DL agent results (no `markdown` field).
+  if (!plan || !plan.itinerary || !plan.itinerary.length) return '';
+  const out = [];
+  out.push(`### ${region?.name || 'Destination'} — ${plan.best_season || ''}`);
+  out.push('');
+  (plan.itinerary || []).forEach((day) => {
+    out.push(`#### ${day.day || ''} — ${day.theme || ''}`);
+    if (day.morning)   out.push(`- **Morning:** ${day.morning}`);
+    if (day.afternoon) out.push(`- **Afternoon:** ${day.afternoon}`);
+    if (day.evening)   out.push(`- **Evening:** ${day.evening}`);
+    if (day.activity)  out.push(`- ${day.activity}`);
+    if (day.tip)       out.push(`> ${day.tip}`);
+    out.push('');
+  });
+  if (plan.food && plan.food.length) {
+    out.push(`### Food`, ...plan.food.map((f) => `- ${f}`), '');
+  }
+  if (plan.tips && plan.tips.length) {
+    out.push(`### Tips`, ...plan.tips.map((t) => `- ${t}`), '');
+  }
+  if (plan.budget) out.push(`**Typical budget:** ${plan.budget}`);
+  return out.join('\n');
 }
 
 function renderStructuredPlan(plan, region) {
@@ -1122,20 +1522,18 @@ function renderEval(data) {
 // ════════════════════════════════════════════════════════════════════════════
 
 const GESTURE_EMOJI = {
-  rotate_left:  '👈',
-  rotate_right: '👉',
-  zoom:         '🖐️',
-  point:        '☝️',
-  fist:         '✊',
-  none:         '·',
+  pinch:     '🤏',
+  open_palm: '🖐️',
+  point:     '☝️',
+  fist:      '✊',
+  none:      '·',
 };
 const GESTURE_DISPLAY = {
-  rotate_left:  'Rotate left',
-  rotate_right: 'Rotate right',
-  zoom:         'Zoom (palm area)',
-  point:        'Aiming',
-  fist:         'Fist',
-  none:         'No gesture',
+  pinch:     'Pinch + drag',
+  open_palm: 'Zoom (palm area)',
+  point:     'Aiming',
+  fist:      'View locked',
+  none:      'No gesture',
 };
 const GESTURE_INTERVAL_MS = 100;  // 10 fps — smoother laser tracking
 const GESTURE_FRAME_WIDTH = 320;  // downscale before sending to save bandwidth/CPU
@@ -1234,6 +1632,7 @@ async function captureAndClassify() {
     const data = await resp.json();
     setGestureLabel(data);
     updateLaserPointer(data);
+    applyGestureToGlobe(data);
     gestureFrameCount += 1;
   } catch (err) {
     console.warn('gesture request failed:', err);
@@ -1262,41 +1661,56 @@ function setGestureLabel(data) {
   const backendTag = (data && data.mode === 'non_dl') ? 'OpenCV · Non-DL' : 'MediaPipe · DL';
   if (gesture === 'none') {
     meta.textContent = backendTag;
-  } else if (gesture === 'zoom') {
-    meta.textContent = `area ${(palmArea * 100).toFixed(1)}% · conf ${(confidence * 100).toFixed(0)}%`;
+  } else if (gesture === 'open_palm') {
+    // Only show the 2-s countdown when the view is locked (post-fist).
+    // Otherwise zoom engages immediately and the meta just shows palm area.
+    const locked = (typeof _viewLocked !== 'undefined') && _viewLocked;
+    const startTs = (typeof _openPalmStartTs !== 'undefined') ? _openPalmStartTs : null;
+    if (locked && startTs !== null) {
+      const held = Date.now() - startTs;
+      if (held < OPEN_PALM_HOLD_MS) {
+        meta.textContent = `unlocking zoom… ${Math.round(held / OPEN_PALM_HOLD_MS * 100)}%`;
+      } else {
+        meta.textContent = `area ${(palmArea * 100).toFixed(1)}% · drives zoom`;
+      }
+    } else {
+      meta.textContent = `area ${(palmArea * 100).toFixed(1)}% · drives zoom`;
+    }
+  } else if (gesture === 'pinch') {
+    meta.textContent = 'drag the pinch to rotate globe';
   } else if (gesture === 'point') {
-    meta.textContent = 'aim · close fist to confirm';
+    meta.textContent = 'hold 2.5 s on a spot to select';
   } else if (gesture === 'fist') {
-    meta.textContent = `conf ${(confidence * 100).toFixed(0)}% · close fist to confirm point`;
+    meta.textContent = 'zoom locked · hold open_palm 2 s to resume';
   } else {
     meta.textContent = `conf ${(confidence * 100).toFixed(0)}% · ${backendTag}`;
   }
 
-  const barValue = gesture === 'zoom' ? palmArea : confidence;
+  // Bar doubles as a palm-area gauge for open_palm (the zoom signal);
+  // otherwise it shows raw classifier confidence.
+  const barValue = gesture === 'open_palm' ? palmArea : confidence;
   document.getElementById('gesture-conf-bar').style.width =
     Math.round(Math.max(0, Math.min(1, barValue)) * 100) + '%';
 }
 
-// ── Laser-pointer + select pins ──────────────────────────────────────────
+// ── Laser-pointer + dwell-to-confirm ─────────────────────────────────────
 // Red dot tracks the index fingertip whenever the backend returns `point`.
-// The select pin is synthesized on a `point → fist` edge: we remember the
-// last screen-space tip position during point frames, and when the gesture
-// edges into fist within SELECT_EDGE_WINDOW_MS of the last point frame,
-// plant a persistent green pin at that remembered position.
-const SELECT_EDGE_WINDOW_MS = 1200;  // generous window to tolerate transient 'none' frames
-const POINT_COMMIT_FRAMES = 3;       // must see 'point' this many frames in a row
-                                     //   before treating it as a real aim — stops
-                                     //   one-frame classifier flickers during motion
-                                     //   to fist from producing spurious selects
+// Select is triggered by DWELLING the fingertip on a spot for 3 seconds —
+// not by a fist edge. Human hands have natural micro-tremor of a few pixels
+// even when "held still", so we accept drift within DWELL_TOLERANCE_PX and
+// only reset the dwell timer when the tip leaves that zone. A conic-gradient
+// progress ring around the dot gives real-time feedback on dwell progress.
+const DWELL_DURATION_MS = 2500;   // 2.5 s hold → select
+const DWELL_TOLERANCE_PX = 35;    // allow this much tremor without resetting
 // Linearly amplify the fingertip range — a hand naturally sweeps the middle
 // of the camera frame, so mapping raw [0,1] tip coords to the map makes the
 // dot crawl. Map [LASER_MIN, LASER_MAX] in camera space to [0,1] of the map.
 const LASER_MIN = 0.20;
 const LASER_MAX = 0.80;
 
-let _lastPointTip = null;   // { x, y, ts } — last screen-space tip in point mode
-let _prevGesture  = 'none';
-let _pointStreak  = 0;      // consecutive point frames seen
+let _dwellAnchor = null;   // { x, y } screen-space anchor of the current dwell
+let _dwellStartTs = 0;     // when the current dwell started (ms since epoch)
+let _dwellFired = false;   // latched so one dwell fires exactly once
 
 function _mapTipToScreen(tip) {
   const rect = document.getElementById('map-container').getBoundingClientRect();
@@ -1306,40 +1720,87 @@ function _mapTipToScreen(tip) {
   return { x: rect.left + fx * rect.width, y: rect.top + fy * rect.height };
 }
 
+function _resetDwell() {
+  _dwellAnchor = null;
+  _dwellFired = false;
+  const ring = document.getElementById('dwell-ring');
+  if (ring) {
+    ring.classList.remove('active');
+    ring.style.setProperty('--dwell-angle', '0deg');
+  }
+}
+
 function updateLaserPointer(data) {
   const dot = document.getElementById('laser-dot');
+  const ring = document.getElementById('dwell-ring');
   const gesture = (data && data.gesture) || 'none';
   const tip = data && data.index_tip;
 
+  // Laser + dwell are pick-phase tools. After both locations are confirmed
+  // we hide everything so gestures during form/planning/result don't spawn
+  // ghost pins on the globe.
+  const inPickPhase = phase === 'PICK_ORIGIN' || phase === 'PICK_DEST';
+  if (!inPickPhase) {
+    dot.classList.remove('active');
+    _resetDwell();
+    return;
+  }
+
   if (gesture === 'point' && tip) {
-    _pointStreak += 1;
     const { x: cx, y: cy } = _mapTipToScreen(tip);
-    const size = 16;
-    dot.style.transform = `translate(${cx - size / 2}px, ${cy - size / 2}px)`;
+    const dotSize = 16;
+    dot.style.transform = `translate(${cx - dotSize / 2}px, ${cy - dotSize / 2}px)`;
     dot.classList.add('active');
-    // Only count this as a valid "aim" once the pose has held for a few
-    // frames. Otherwise a one-frame misclassification during a fist motion
-    // would seed _lastPointTip and immediately fire a select on the next
-    // (real) fist frame.
-    if (_pointStreak >= POINT_COMMIT_FRAMES) {
-      _lastPointTip = { x: cx, y: cy, ts: Date.now() };
+
+    // Dwell bookkeeping. If this is the first point frame (or we just left
+    // the tolerance zone), seed a new anchor and restart the timer.
+    const now = Date.now();
+    if (_dwellAnchor === null) {
+      _dwellAnchor = { x: cx, y: cy };
+      _dwellStartTs = now;
+      _dwellFired = false;
+    } else {
+      const drift = Math.hypot(cx - _dwellAnchor.x, cy - _dwellAnchor.y);
+      if (drift > DWELL_TOLERANCE_PX) {
+        _dwellAnchor = { x: cx, y: cy };
+        _dwellStartTs = now;
+        _dwellFired = false;
+      }
+    }
+
+    // Paint the progress ring at the current tip.
+    const elapsed = now - _dwellStartTs;
+    const progress = Math.max(0, Math.min(1, elapsed / DWELL_DURATION_MS));
+    const ringSize = 48;
+    ring.style.transform = `translate(${cx - ringSize / 2}px, ${cy - ringSize / 2}px)`;
+    ring.style.setProperty('--dwell-angle', (progress * 360).toFixed(1) + 'deg');
+    ring.classList.add('active');
+
+    // When the ring completes a full turn, fire select (exactly once per dwell).
+    if (progress >= 1 && !_dwellFired) {
+      _dwellFired = true;
+      _fireDwellSelect(_dwellAnchor.x, _dwellAnchor.y);
     }
   } else {
+    // Gesture dropped out of `point` — cancel the dwell so the user starts
+    // a fresh countdown next time they aim.
     dot.classList.remove('active');
-    _pointStreak = 0;
+    _resetDwell();
   }
+}
 
-  // Edge detection: we just entered fist AND we have a recent point tip.
-  if (gesture === 'fist' && _prevGesture !== 'fist' && _lastPointTip) {
-    const age = Date.now() - _lastPointTip.ts;
-    if (age <= SELECT_EDGE_WINDOW_MS) {
-      spawnSelectPin(_lastPointTip.x, _lastPointTip.y);
-      flashSelectedLabel();
-    }
-    _lastPointTip = null;
+function _fireDwellSelect(cx, cy) {
+  spawnSelectPin(cx, cy);
+  const coords = _screenToLatLng(cx, cy);
+  if (coords && (phase === 'PICK_ORIGIN' || phase === 'PICK_DEST')) {
+    flashSelectedLabel();
+    handleMapClick(coords.lat, coords.lng);
+  } else if (coords) {
+    flashSelectedLabel();  // past picking phase; just acknowledge
+  } else {
+    flashLabel('✨', 'Point at the globe',
+               'aim the finger inside the globe and hold for 3 s');
   }
-
-  _prevGesture = gesture;
 }
 
 function spawnSelectPin(cx, cy) {
@@ -1348,31 +1809,231 @@ function spawnSelectPin(cx, cy) {
   const size = 18;
   pin.style.setProperty('--x', `${cx - size / 2}px`);
   pin.style.setProperty('--y', `${cy - size / 2}px`);
-  // End-state of the animation so it sticks after the pulse:
-  pin.style.transform = `translate(${cx - size / 2}px, ${cy - size / 2}px)`;
   document.getElementById('map-container').appendChild(pin);
+  // Remove from DOM after the fade animation (duration matches the CSS
+  // keyframe length). The persistent pin becomes the blue/orange Globe.gl
+  // point on the sphere once handleMapClick fires.
+  pin.addEventListener('animationend', () => pin.remove(), { once: true });
+  // Fallback in case the animation event is dropped (tab hidden etc.)
+  setTimeout(() => pin.remove(), 1200);
 }
 
 function flashSelectedLabel() {
+  flashLabel('✅', 'Selected!',
+             'location picked — confirm in the side panel',
+             'rgb(50, 210, 120)');
+}
+
+function flashLabel(emoji, name, meta, color) {
   _selectFlashUntil = Date.now() + 900;
-  document.getElementById('gesture-emoji').textContent = '✅';
+  document.getElementById('gesture-emoji').textContent = emoji;
   const nameEl = document.getElementById('gesture-name');
-  nameEl.textContent = 'Selected!';
-  nameEl.style.color = 'rgb(50, 210, 120)';
-  document.getElementById('gesture-meta').textContent =
-    'green pin placed at last finger position';
+  nameEl.textContent = name;
+  nameEl.style.color = color || 'rgb(50, 210, 120)';
+  document.getElementById('gesture-meta').textContent = meta;
+}
+
+// ── Gesture → Cesium camera ──────────────────────────────────────────────
+// Called every /gesture response (≈10 fps).
+//   pinch     → trackball rotate: frame-to-frame screen-space drag of the
+//               pinch midpoint becomes rotateLeft/rotateUp.
+//   open_palm → exponential zoom: palm_area ∈ [0.05, 0.80] maps through a
+//               geometric curve to altitude ∈ [MAX, MIN]. The exp curve
+//               lets the close end of the range zoom in much faster than
+//               the far end, which feels right: you do gross navigation at
+//               small palm (far), fine approach at big palm (close).
+//   fist      → no-op: camera holds still (the user is "resting").
+//   point     → no-op here; handled by updateLaserPointer (dwell to select).
+// Pinch sensitivity scales with altitude — fast sweeps when the globe is
+// small on screen (camera far out), fine precision when zoomed into streets.
+// Formula: sens = BASE × sqrt(altitude / ZOOM_MAX_HEIGHT). At max altitude
+// the coefficient equals BASE (like the previous 0.002 rad/px baseline);
+// at min altitude it drops by ~14× (150 km / 30 Mm → sqrt ≈ 0.07).
+const PINCH_SENS_BASE = 0.0020;
+const ZOOM_MIN_HEIGHT = 150_000;      // 150 km — street-level detail via OSM
+const ZOOM_MAX_HEIGHT = 30_000_000;   // 30,000 km — full earth + margin
+const ZOOM_PALM_LO = 0.05;
+const ZOOM_PALM_HI = 0.55;            // 55% palm = max zoom-in
+const ZOOM_LERP = 0.30;               // fraction of residual per frame
+
+// Zoom is instant by default. It only requires a 2-second open_palm hold
+// when the view has been locked (which happens when the user shows `fist`).
+// This keeps normal navigation snappy while still protecting against
+// accidental zoom changes after a deliberate "stop" signal.
+const OPEN_PALM_HOLD_MS = 2000;
+
+let _pinchLastPoint = null;           // { x, y } screen coords from prev frame
+let _openPalmStartTs = null;          // ms timestamp when open_palm run started
+let _viewLocked = false;              // set by fist; cleared by completed 2 s hold
+
+function applyGestureToGlobe(data) {
+  if (!viewer) return;
+  const gesture = (data && data.gesture) || 'none';
+  const holdRing = document.getElementById('palm-hold-ring');
+  const holdLabel = document.getElementById('palm-hold-label');
+  const setHoldVisible = (on, pct) => {
+    if (holdRing) holdRing.classList.toggle('active', on);
+    if (holdLabel) {
+      holdLabel.classList.toggle('active', on);
+      if (on) holdLabel.textContent = pct != null
+        ? `ZOOM · ${Math.round(pct)}%`
+        : 'ZOOM';
+    }
+  };
+
+  // Gestures stay active through every phase now: even after both locations
+  // are picked, the user wants pinch-drag and zoom to keep working so they
+  // can inspect the globe while the ReAct agent plans or the result shows.
+  // (updateLaserPointer still gates the laser + dwell to PICK phases only,
+  // since selecting doesn't make sense after the picks are done.)
+
+  if (gesture === 'pinch' && data.pinch_point) {
+    const { x, y } = _mapTipToScreen(data.pinch_point);
+    if (_pinchLastPoint) {
+      const dx = x - _pinchLastPoint.x;
+      const dy = y - _pinchLastPoint.y;
+      // sqrt-proportional scaling — fast rotate when globe is small on
+      // screen (high altitude), precise when zoomed into streets (low alt).
+      const alt = viewer.camera.positionCartographic.height;
+      const altT = Math.max(0, Math.min(1, alt / ZOOM_MAX_HEIGHT));
+      const sens = PINCH_SENS_BASE * Math.sqrt(altT);
+      // Drag RIGHT on screen ⇒ globe spins left ⇒ rotate camera LEFT.
+      viewer.camera.rotateLeft(dx * sens);
+      // Drag DOWN on screen ⇒ look up toward the poles ⇒ rotateUp(-dy).
+      viewer.camera.rotateUp(-dy * sens);
+    }
+    _pinchLastPoint = { x, y };
+    _openPalmStartTs = null;  // pinch interrupts any open-palm hold
+    setHoldVisible(false);
+    return;
+  }
+  // Any non-pinch frame clears the drag anchor so the next pinch starts fresh.
+  _pinchLastPoint = null;
+
+  if (gesture === 'fist') {
+    // Fist = "lock": the next open_palm must be held for 2 s to re-enable
+    // zoom. This only affects open_palm — pinch still rotates freely even
+    // while locked, because locking should only guard against accidental
+    // zoom changes, not freeze navigation entirely.
+    _viewLocked = true;
+    _openPalmStartTs = null;
+    setHoldVisible(false);
+    return;
+  }
+
+  if (gesture === 'open_palm') {
+    if (_viewLocked) {
+      // Need a sustained hold to release the lock.
+      if (_openPalmStartTs === null) _openPalmStartTs = Date.now();
+      const held = Date.now() - _openPalmStartTs;
+      if (held < OPEN_PALM_HOLD_MS) {
+        const pct = (held / OPEN_PALM_HOLD_MS) * 100;
+        if (holdRing) {
+          holdRing.style.setProperty('--palm-hold-angle', (pct * 3.6).toFixed(1) + 'deg');
+        }
+        setHoldVisible(true, pct);
+        return;
+      }
+      // Hold completed → unlock and continue into the zoom branch below.
+      _viewLocked = false;
+      _openPalmStartTs = null;
+      setHoldVisible(false);
+    }
+
+    const palmArea = Math.max(0, Math.min(1, data.palm_area || 0));
+    const t = Math.max(0, Math.min(1,
+      (palmArea - ZOOM_PALM_LO) / (ZOOM_PALM_HI - ZOOM_PALM_LO)));
+    // Geometric interpolation: altitude = MIN · (MAX/MIN)^(1-t). At t=0
+    // (small palm) altitude = MAX; at t=1 (55% palm) altitude = MIN.
+    const targetHeight = ZOOM_MIN_HEIGHT
+      * Math.pow(ZOOM_MAX_HEIGHT / ZOOM_MIN_HEIGHT, 1 - t);
+    const cart = viewer.camera.positionCartographic;
+    const newHeight = cart.height + (targetHeight - cart.height) * ZOOM_LERP;
+    viewer.camera.setView({
+      destination: Cesium.Cartesian3.fromRadians(cart.longitude, cart.latitude, newHeight),
+      orientation: {
+        heading: viewer.camera.heading,
+        pitch: viewer.camera.pitch,
+        roll: viewer.camera.roll,
+      },
+    });
+    return;
+  }
+  // Any non-open_palm frame resets the dwell timer — the next open_palm
+  // starts fresh. (fist / point / none all land here and simply hold view.)
+  _openPalmStartTs = null;
+  setHoldVisible(false);
+}
+
+// Convert screen-space (x, y) to { lat, lng } on the globe ellipsoid, or
+// null if the ray misses the sphere (pointed at space). Used by the dwell
+// select to turn a fingertip position into a pickable geographic point.
+function _screenToLatLng(clientX, clientY) {
+  const rect = viewer.scene.canvas.getBoundingClientRect();
+  const pos = new Cesium.Cartesian2(clientX - rect.left, clientY - rect.top);
+  const cart3 = viewer.camera.pickEllipsoid(pos, viewer.scene.globe.ellipsoid);
+  if (!cart3) return null;
+  const cart = Cesium.Cartographic.fromCartesian(cart3);
+  return {
+    lat: Cesium.Math.toDegrees(cart.latitude),
+    lng: Cesium.Math.toDegrees(cart.longitude),
+  };
 }
 
 function clearLaserAndPins() {
   document.getElementById('laser-dot').classList.remove('active');
   document.querySelectorAll('.select-pin').forEach(p => p.remove());
-  _lastPointTip = null;
-  _prevGesture = 'none';
-  _pointStreak = 0;
+  _resetDwell();
 }
 
 // Release camera cleanly when tab closes
 window.addEventListener('beforeunload', disableGesture);
+
+// ── Resizable side panel ─────────────────────────────────────────────────
+// User drags the handle sitting between #map-container and #panel; we
+// update the --panel-w CSS var and resize the globe renderer in sync.
+(() => {
+  const handle = document.getElementById('panel-resize-handle');
+  if (!handle) return;
+  const MIN_W = 320;
+  const MAX_W = Math.max(800, Math.floor(window.innerWidth * 0.65));
+  let dragging = false;
+  let startX = 0;
+  let startWidth = 0;
+
+  function syncGlobeSize() {
+    if (typeof viewer === 'undefined' || !viewer) return;
+    viewer.resize();
+  }
+
+  handle.addEventListener('pointerdown', (e) => {
+    dragging = true;
+    startX = e.clientX;
+    startWidth = document.getElementById('panel').getBoundingClientRect().width;
+    handle.classList.add('dragging');
+    handle.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  });
+
+  handle.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    // Dragging LEFT (lower clientX) widens the panel; dragging RIGHT shrinks it.
+    const dx = startX - e.clientX;
+    const newW = Math.max(MIN_W, Math.min(MAX_W, startWidth + dx));
+    document.documentElement.style.setProperty('--panel-w', newW + 'px');
+    syncGlobeSize();
+  });
+
+  const stop = (e) => {
+    if (!dragging) return;
+    dragging = false;
+    handle.classList.remove('dragging');
+    try { handle.releasePointerCapture(e.pointerId); } catch {}
+    syncGlobeSize();  // final sync in case mousemove missed the last pixel
+  };
+  handle.addEventListener('pointerup', stop);
+  handle.addEventListener('pointercancel', stop);
+})();
 
 // ── Initial render ────────────────────────────────────────────────────────
 renderPanel();
