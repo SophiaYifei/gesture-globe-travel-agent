@@ -1,22 +1,34 @@
 """DL perception — MediaPipe Hand Landmarker + geometric gesture classifier.
 
-4 gesture classes (mapped to future globe controls):
-  open_palm  → rotate + zoom   (4-5 fingers extended; zoom level = palm_area)
-  point      → select          (only index extended)
-  fist       → stop             (no fingers extended)
-  none       → (no hand detected) or ambiguous pose
+Gesture taxonomy (future globe control on the right):
+  rotate_left   → spin globe left    (open palm held vertical, fingers left 🫲)
+  rotate_right  → spin globe right   (open palm held vertical, fingers right 🫱)
+  zoom          → pan zoom           (open palm flat, fingers up 🖐️; palm_area
+                                      is the zoom signal — bigger = zoom in)
+  point         → aim (laser dot)    (only the index finger is extended)
+  fist          → confirm / stop     (no fingers extended)
+  none          → no hand detected, or ambiguous pose
 
-Zoom is NOT its own gesture: while open_palm is held, the hand's bounding-box
-area (as a fraction of the frame) drives zoom level — larger palm area zooms
-in, smaller zooms out. This is why every response carries `bbox` and
-`palm_area` alongside the gesture label.
+Note: "select" is NOT a classifier label — it's a state transition the client
+synthesizes when gesture goes from `point` → `fist`. The backend just emits
+the two raw states; the frontend pins a green marker at the last `index_tip`
+seen during `point` when it sees the edge into `fist`.
 
-Uses MediaPipe's new Tasks API (`mediapipe.tasks.python.vision.HandLandmarker`)
+Palm orientation is derived from the wrist → MIDDLE_MCP vector after the
+frontend mirrors the frame horizontally before POSTing — so image X matches
+the user's own left/right, and a 🫲 gesture produces dx<0 (rotate_left) as a
+user naturally expects.
+
+For the laser-pointer UI, detect() also returns `index_tip` — the normalized
+(x, y) of landmark 8 — but only when the index is the ONLY extended finger
+(i.e. the `point` pose). That keeps the red dot off during open_palm / fist.
+
+Uses MediaPipe's Tasks API (`mediapipe.tasks.python.vision.HandLandmarker`)
 since the old `mp.solutions.hands` module was removed in mediapipe 0.10.22+.
 The detector itself is a DL model (21-point landmark regressor); classification
-is a pure geometric rule on top of the landmarks — the "DL" label applies to
-the perception stage, which is what the project rubric cares about. A separate
-non_dl_hands.py will reimplement the perception stage with classical CV only.
+is pure geometry on top of the landmarks — the "DL" label applies to the
+perception stage, which is what the project rubric cares about. A sibling
+non_dl_hands.py will reimplement the perception stage with classical CV.
 """
 from __future__ import annotations
 
@@ -50,13 +62,15 @@ class MediaPipeHandDetector:
 
     `detect(img_bytes)` returns:
       {
-        "gesture": "open_palm" | "point" | "fist" | "none",
+        "gesture": "rotate_left"|"rotate_right"|"zoom"|"point"|"fist"|"none",
         "confidence": float,       # 0..1, coarse classifier margin
         "landmarks": [[x,y,z],..], # 21 points in normalized [0,1] image coords,
                                    # empty if no hand detected
         "handedness": "Left" | "Right" | null,
         "bbox": [xmin,ymin,xmax,ymax],  # normalized [0,1]; [] if no hand
         "palm_area": float,        # bbox area as fraction of frame, drives zoom
+        "index_tip": [x, y] | null, # normalized tip coords during `point`
+                                   #   (same gate as the laser-pointer dot)
       }
     """
 
@@ -98,7 +112,7 @@ class MediaPipeHandDetector:
         if not result.hand_landmarks:
             return {"gesture": "none", "confidence": 0.0,
                     "landmarks": [], "handedness": None,
-                    "bbox": [], "palm_area": 0.0}
+                    "bbox": [], "palm_area": 0.0, "index_tip": None}
 
         # One hand max (num_hands=1)
         hand = result.hand_landmarks[0]
@@ -117,6 +131,7 @@ class MediaPipeHandDetector:
             "handedness": handedness,
             "bbox": [round(v, 4) for v in bbox],
             "palm_area": round(float(palm_area), 4),
+            "index_tip": _index_tip_if_only_index(landmarks),
         }
 
     def close(self):
@@ -158,34 +173,74 @@ def _hand_scale(landmarks) -> float:
 def classify_gesture(landmarks: list[list[float]]) -> tuple[str, float]:
     """Return (label, confidence) for a set of 21 normalized landmarks.
 
-    Order: open_palm → point → fist → none.
-    Pinch is no longer a class — zoom is driven by the bbox area of open_palm.
+    Order: point → open_palm (→ rotate_left / rotate_right / zoom) → fist.
+    The frontend mirrors the webcam frame before POST, so image X matches the
+    user's own left/right. "select" is not a classifier label — the frontend
+    synthesizes it from a `point → fist` edge.
     """
     if len(landmarks) != 21:
         return "none", 0.0
 
-    thumb = _thumb_extended(landmarks)
     index = _finger_extended(landmarks, INDEX_TIP, INDEX_PIP)
     middle = _finger_extended(landmarks, MIDDLE_TIP, MIDDLE_PIP)
     ring = _finger_extended(landmarks, RING_TIP, RING_PIP)
     pinky = _finger_extended(landmarks, PINKY_TIP, PINKY_PIP)
 
-    n_ext = sum([thumb, index, middle, ring, pinky])
-
-    # 1. Open palm — the four non-thumb fingers are extended; thumb optional.
-    #    Zoom signal = palm_area returned alongside the gesture label.
-    if index and middle and ring and pinky:
-        return "open_palm", 0.9
-
-    # 2. Point — only the index finger is extended (thumb may or may not be).
+    # 1. Point — only the index finger is extended. No area/orientation gate:
+    #    the laser-pointer dot tracks the tip continuously while the user is
+    #    "aiming"; the frontend fires a select pin when the hand then closes
+    #    into a fist.
     if index and not middle and not ring and not pinky:
-        return "point", 0.85
+        return "point", 0.9
 
-    # 3. Fist — no fingers extended (thumb may wrap across palm).
-    if n_ext == 0 or (n_ext == 1 and thumb):
+    # 2. Open palm — 4 non-thumb fingers extended. Direction of the hand axis
+    #    (wrist → MIDDLE_MCP) decides rotate_left / rotate_right / zoom.
+    #    In image coords y+ is down, so:
+    #      fingers up    → dy < 0, dx ≈ 0  → angle near −90°  → zoom
+    #      fingers right → dx > 0, dy ≈ 0  → angle near   0°  → rotate_right
+    #      fingers left  → dx < 0, dy ≈ 0  → angle near ±180° → rotate_left
+    #    Pointing down (angle 45–135°) is unused → "none".
+    if index and middle and ring and pinky:
+        wrist = landmarks[WRIST]
+        mmcp = landmarks[MIDDLE_MCP]
+        dx = mmcp[0] - wrist[0]
+        dy = mmcp[1] - wrist[1]
+        angle = math.degrees(math.atan2(dy, dx))
+        if -135 <= angle <= -45:
+            return "zoom", 0.9
+        if -45 < angle <= 45:
+            return "rotate_right", 0.9
+        if angle > 135 or angle < -135:
+            return "rotate_left", 0.9
+        return "none", 0.0
+
+    # 3. Fist — none of the four non-thumb fingers extended. Thumb is ignored
+    #    because it varies a lot in a real fist (can curl in front of the
+    #    fingers or stick out sideways) and insisting on a strict thumb state
+    #    caused point→fist transitions to stall on an intermediate frame that
+    #    classified as "none" instead of "fist".
+    if not index and not middle and not ring and not pinky:
         return "fist", 0.85
 
     return "none", 0.0
+
+
+def _index_tip_if_only_index(landmarks: list[list[float]]) -> Optional[list[float]]:
+    """Return the index fingertip [x, y] in normalized coords IFF the index is
+    the only extended finger. Used by the frontend to render a laser-pointer
+    dot that tracks the tip in "pointing mode" only (not during open_palm)."""
+    if len(landmarks) != 21:
+        return None
+    if not _finger_extended(landmarks, INDEX_TIP, INDEX_PIP):
+        return None
+    if _finger_extended(landmarks, MIDDLE_TIP, MIDDLE_PIP):
+        return None
+    if _finger_extended(landmarks, RING_TIP, RING_PIP):
+        return None
+    if _finger_extended(landmarks, PINKY_TIP, PINKY_PIP):
+        return None
+    tip = landmarks[INDEX_TIP]
+    return [round(tip[0], 4), round(tip[1], 4)]
 
 
 def _compute_bbox(landmarks: list[list[float]]) -> tuple[list[float], float]:

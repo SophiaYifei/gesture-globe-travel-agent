@@ -408,10 +408,65 @@
     transition: width 0.15s ease-out;
   }
   #gesture-cam .cam-footer .fps { font-family: ui-monospace, monospace; }
+
+  /* Perception-mode toggle (DL vs Non-DL) inside the gesture widget */
+  #gesture-cam .perception-toggle {
+    display: flex;
+    padding: 4px;
+    gap: 2px;
+    background: rgba(255,255,255,0.04);
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+  }
+  #gesture-cam .pt-btn {
+    flex: 1; padding: 6px 8px; border: none; background: transparent;
+    color: rgba(255,255,255,0.55); font-family: var(--sans); font-size: 11px;
+    font-weight: 500; letter-spacing: 0.04em; cursor: pointer;
+    border-radius: 6px; transition: all 0.15s;
+  }
+  #gesture-cam .pt-btn:hover { color: rgba(255,255,255,0.9); }
+  #gesture-cam .pt-btn.active {
+    background: rgba(196,82,42,0.9); color: #fff;
+  }
+
+  /* ── Laser pointer (follows index fingertip) ── */
+  #laser-dot {
+    position: fixed; left: 0; top: 0;
+    width: 16px; height: 16px; border-radius: 50%;
+    background: radial-gradient(circle, rgba(255,60,60,0.95) 0%,
+                                          rgba(255,60,60,0.6) 60%,
+                                          rgba(255,60,60,0)   100%);
+    pointer-events: none; z-index: 950;
+    display: none;
+    will-change: transform;
+    /* Transition length is tuned to match GESTURE_INTERVAL_MS so the dot
+       smoothly tweens between successive backend updates rather than
+       snapping every frame. */
+    transition: transform 0.12s linear;
+  }
+  #laser-dot.active { display: block; }
+
+  .select-pin {
+    position: fixed; left: 0; top: 0;
+    width: 18px; height: 18px; border-radius: 50%;
+    background: radial-gradient(circle, rgba(50,210,120,0.95) 0%,
+                                          rgba(50,210,120,0.65) 60%,
+                                          rgba(50,210,120,0)   100%);
+    border: 2px solid rgba(255,255,255,0.75);
+    box-shadow: 0 0 12px rgba(50,210,120,0.5);
+    pointer-events: none; z-index: 949;
+    animation: select-pulse 0.5s ease-out;
+  }
+  @keyframes select-pulse {
+    0%   { transform: translate(var(--x), var(--y)) scale(2.2); opacity: 0.4; }
+    100% { transform: translate(var(--x), var(--y)) scale(1);   opacity: 1;   }
+  }
 </style>
 </head>
 <body>
 <div id="app">
+  <!-- Laser pointer (fixed-position, floats over everything while gesturing) -->
+  <div id="laser-dot"></div>
+
   <!-- Map -->
   <div id="map-container">
     <div id="map"></div>
@@ -442,6 +497,10 @@
     <!-- Gesture camera (hidden until enabled) -->
     <button id="gesture-toggle" onclick="enableGesture()">✋ Enable gestures</button>
     <div id="gesture-cam">
+      <div class="perception-toggle">
+        <button class="pt-btn active" data-mode="dl"     onclick="setPerceptionMode('dl')">✦ DL (MediaPipe)</button>
+        <button class="pt-btn"         data-mode="non_dl" onclick="setPerceptionMode('non_dl')">⚙ Non-DL (OpenCV)</button>
+      </div>
       <div class="cam-wrap">
         <video id="gesture-video" autoplay playsinline muted></video>
         <button class="cam-close" onclick="disableGesture()" title="Stop camera">✕</button>
@@ -1063,18 +1122,22 @@ function renderEval(data) {
 // ════════════════════════════════════════════════════════════════════════════
 
 const GESTURE_EMOJI = {
-  open_palm: '🖐️',
-  point:     '☝️',
-  fist:      '✊',
-  none:      '·',
+  rotate_left:  '👈',
+  rotate_right: '👉',
+  zoom:         '🖐️',
+  point:        '☝️',
+  fist:         '✊',
+  none:         '·',
 };
 const GESTURE_DISPLAY = {
-  open_palm: 'Open palm',
-  point:     'Pointing',
-  fist:      'Fist',
-  none:      'No hand',
+  rotate_left:  'Rotate left',
+  rotate_right: 'Rotate right',
+  zoom:         'Zoom (palm area)',
+  point:        'Aiming',
+  fist:         'Fist',
+  none:         'No gesture',
 };
-const GESTURE_INTERVAL_MS = 200;  // 5 fps — more than enough for gesture labels
+const GESTURE_INTERVAL_MS = 100;  // 10 fps — smoother laser tracking
 const GESTURE_FRAME_WIDTH = 320;  // downscale before sending to save bandwidth/CPU
 
 let gestureStream = null;
@@ -1084,6 +1147,16 @@ let gestureFrameCount = 0;
 let gestureFpsTimer = null;
 let gestureVideoEl = null;
 let gestureCanvas = null;
+// Perception backend: 'dl' (MediaPipe) or 'non_dl' (OpenCV). Default DL.
+let perceptionMode = 'dl';
+
+function setPerceptionMode(mode) {
+  if (mode !== 'dl' && mode !== 'non_dl') return;
+  perceptionMode = mode;
+  document.querySelectorAll('#gesture-cam .pt-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.mode === mode);
+  });
+}
 
 async function enableGesture() {
   if (gestureStream) return;
@@ -1129,7 +1202,8 @@ function disableGesture() {
   if (gestureVideoEl) gestureVideoEl.srcObject = null;
   document.getElementById('gesture-cam').classList.remove('active');
   document.getElementById('gesture-toggle').style.display = '';
-  setGestureLabel('none', 0);
+  setGestureLabel({ gesture: 'none', confidence: 0, palm_area: 0 });
+  clearLaserAndPins();
 }
 
 async function captureAndClassify() {
@@ -1137,10 +1211,16 @@ async function captureAndClassify() {
   if (gestureVideoEl.videoWidth === 0) return;
 
   const ctx = gestureCanvas.getContext('2d');
-  // NOTE: don't mirror here — we send the raw frame to the backend so
-  // MediaPipe's handedness label stays consistent. The on-screen video is
-  // mirrored via CSS for UX only.
+  // Mirror the frame horizontally so image X matches the user's own
+  // left/right — the classifier relies on that orientation to decide
+  // rotate_left vs rotate_right, and the laser-pointer dot should follow
+  // the finger in the same direction the user sees in the preview.
+  // Side effect: MediaPipe's handedness label is flipped; we don't use it.
+  ctx.save();
+  ctx.translate(gestureCanvas.width, 0);
+  ctx.scale(-1, 1);
   ctx.drawImage(gestureVideoEl, 0, 0, gestureCanvas.width, gestureCanvas.height);
+  ctx.restore();
   const dataUrl = gestureCanvas.toDataURL('image/jpeg', 0.6);
 
   gestureInFlight = true;
@@ -1148,11 +1228,12 @@ async function captureAndClassify() {
     const resp = await fetch('/gesture', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ frame: dataUrl }),
+      body: JSON.stringify({ frame: dataUrl, mode: perceptionMode }),
     });
     if (!resp.ok) { console.warn('/gesture HTTP', resp.status); return; }
     const data = await resp.json();
     setGestureLabel(data);
+    updateLaserPointer(data);
     gestureFrameCount += 1;
   } catch (err) {
     console.warn('gesture request failed:', err);
@@ -1161,29 +1242,133 @@ async function captureAndClassify() {
   }
 }
 
+// When a select event fires we briefly take over the gesture label widget
+// to flash "Selected!", and lock out normal updates so the flash is visible.
+let _selectFlashUntil = 0;
+
 function setGestureLabel(data) {
+  if (Date.now() < _selectFlashUntil) return;
+
   const gesture = (data && data.gesture) || 'none';
   const confidence = (data && data.confidence) || 0;
   const palmArea = (data && data.palm_area) || 0;
 
   document.getElementById('gesture-emoji').textContent = GESTURE_EMOJI[gesture] || '·';
-  document.getElementById('gesture-name').textContent = GESTURE_DISPLAY[gesture] || gesture;
+  const nameEl = document.getElementById('gesture-name');
+  nameEl.textContent = GESTURE_DISPLAY[gesture] || gesture;
+  nameEl.style.color = '';  // reset any lingering flash color
 
   const meta = document.getElementById('gesture-meta');
+  const backendTag = (data && data.mode === 'non_dl') ? 'OpenCV · Non-DL' : 'MediaPipe · DL';
   if (gesture === 'none') {
-    meta.textContent = 'MediaPipe · DL';
-  } else if (gesture === 'open_palm') {
-    // Palm area drives zoom — show it so the user can calibrate.
-    meta.textContent = `zoom ${(palmArea * 100).toFixed(1)}% · conf ${(confidence * 100).toFixed(0)}%`;
+    meta.textContent = backendTag;
+  } else if (gesture === 'zoom') {
+    meta.textContent = `area ${(palmArea * 100).toFixed(1)}% · conf ${(confidence * 100).toFixed(0)}%`;
+  } else if (gesture === 'point') {
+    meta.textContent = 'aim · close fist to confirm';
+  } else if (gesture === 'fist') {
+    meta.textContent = `conf ${(confidence * 100).toFixed(0)}% · close fist to confirm point`;
   } else {
-    meta.textContent = `conf ${(confidence * 100).toFixed(0)}% · MediaPipe · DL`;
+    meta.textContent = `conf ${(confidence * 100).toFixed(0)}% · ${backendTag}`;
   }
 
-  // While palm is open, the "confidence bar" doubles as a palm-area gauge —
-  // visually ties the zoom-control signal to the bottom strip of the widget.
-  const barValue = gesture === 'open_palm' ? palmArea : confidence;
+  const barValue = gesture === 'zoom' ? palmArea : confidence;
   document.getElementById('gesture-conf-bar').style.width =
     Math.round(Math.max(0, Math.min(1, barValue)) * 100) + '%';
+}
+
+// ── Laser-pointer + select pins ──────────────────────────────────────────
+// Red dot tracks the index fingertip whenever the backend returns `point`.
+// The select pin is synthesized on a `point → fist` edge: we remember the
+// last screen-space tip position during point frames, and when the gesture
+// edges into fist within SELECT_EDGE_WINDOW_MS of the last point frame,
+// plant a persistent green pin at that remembered position.
+const SELECT_EDGE_WINDOW_MS = 1200;  // generous window to tolerate transient 'none' frames
+const POINT_COMMIT_FRAMES = 3;       // must see 'point' this many frames in a row
+                                     //   before treating it as a real aim — stops
+                                     //   one-frame classifier flickers during motion
+                                     //   to fist from producing spurious selects
+// Linearly amplify the fingertip range — a hand naturally sweeps the middle
+// of the camera frame, so mapping raw [0,1] tip coords to the map makes the
+// dot crawl. Map [LASER_MIN, LASER_MAX] in camera space to [0,1] of the map.
+const LASER_MIN = 0.20;
+const LASER_MAX = 0.80;
+
+let _lastPointTip = null;   // { x, y, ts } — last screen-space tip in point mode
+let _prevGesture  = 'none';
+let _pointStreak  = 0;      // consecutive point frames seen
+
+function _mapTipToScreen(tip) {
+  const rect = document.getElementById('map-container').getBoundingClientRect();
+  const span = LASER_MAX - LASER_MIN;
+  const fx = Math.max(0, Math.min(1, (tip[0] - LASER_MIN) / span));
+  const fy = Math.max(0, Math.min(1, (tip[1] - LASER_MIN) / span));
+  return { x: rect.left + fx * rect.width, y: rect.top + fy * rect.height };
+}
+
+function updateLaserPointer(data) {
+  const dot = document.getElementById('laser-dot');
+  const gesture = (data && data.gesture) || 'none';
+  const tip = data && data.index_tip;
+
+  if (gesture === 'point' && tip) {
+    _pointStreak += 1;
+    const { x: cx, y: cy } = _mapTipToScreen(tip);
+    const size = 16;
+    dot.style.transform = `translate(${cx - size / 2}px, ${cy - size / 2}px)`;
+    dot.classList.add('active');
+    // Only count this as a valid "aim" once the pose has held for a few
+    // frames. Otherwise a one-frame misclassification during a fist motion
+    // would seed _lastPointTip and immediately fire a select on the next
+    // (real) fist frame.
+    if (_pointStreak >= POINT_COMMIT_FRAMES) {
+      _lastPointTip = { x: cx, y: cy, ts: Date.now() };
+    }
+  } else {
+    dot.classList.remove('active');
+    _pointStreak = 0;
+  }
+
+  // Edge detection: we just entered fist AND we have a recent point tip.
+  if (gesture === 'fist' && _prevGesture !== 'fist' && _lastPointTip) {
+    const age = Date.now() - _lastPointTip.ts;
+    if (age <= SELECT_EDGE_WINDOW_MS) {
+      spawnSelectPin(_lastPointTip.x, _lastPointTip.y);
+      flashSelectedLabel();
+    }
+    _lastPointTip = null;
+  }
+
+  _prevGesture = gesture;
+}
+
+function spawnSelectPin(cx, cy) {
+  const pin = document.createElement('div');
+  pin.className = 'select-pin';
+  const size = 18;
+  pin.style.setProperty('--x', `${cx - size / 2}px`);
+  pin.style.setProperty('--y', `${cy - size / 2}px`);
+  // End-state of the animation so it sticks after the pulse:
+  pin.style.transform = `translate(${cx - size / 2}px, ${cy - size / 2}px)`;
+  document.getElementById('map-container').appendChild(pin);
+}
+
+function flashSelectedLabel() {
+  _selectFlashUntil = Date.now() + 900;
+  document.getElementById('gesture-emoji').textContent = '✅';
+  const nameEl = document.getElementById('gesture-name');
+  nameEl.textContent = 'Selected!';
+  nameEl.style.color = 'rgb(50, 210, 120)';
+  document.getElementById('gesture-meta').textContent =
+    'green pin placed at last finger position';
+}
+
+function clearLaserAndPins() {
+  document.getElementById('laser-dot').classList.remove('active');
+  document.querySelectorAll('.select-pin').forEach(p => p.remove());
+  _lastPointTip = null;
+  _prevGesture = 'none';
+  _pointStreak = 0;
 }
 
 // Release camera cleanly when tab closes

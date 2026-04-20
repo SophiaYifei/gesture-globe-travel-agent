@@ -11,17 +11,21 @@ app = Flask(__name__)
 non_dl_agent = NonDLAgent()
 dl_agent = DLAgent()
 
-# Lazy-init gesture detector — loading the MediaPipe model adds ~1s to startup,
-# and we don't want that cost if the user is only using the map flow.
-_gesture_detector = None
+# Lazy-init gesture detectors — one per perception mode, cached in a dict so
+# each is loaded at most once. MediaPipe adds ~1s to first call; OpenCV is
+# instant because there's no model to load.
+_gesture_detectors: dict = {}
 
 
-def _get_gesture_detector():
-    global _gesture_detector
-    if _gesture_detector is None:
-        from perception.mediapipe_hands import MediaPipeHandDetector
-        _gesture_detector = MediaPipeHandDetector()
-    return _gesture_detector
+def _get_gesture_detector(mode: str = 'dl'):
+    if mode not in _gesture_detectors:
+        if mode == 'non_dl':
+            from perception.opencv_hands import OpenCVHandDetector
+            _gesture_detectors[mode] = OpenCVHandDetector()
+        else:
+            from perception.mediapipe_hands import MediaPipeHandDetector
+            _gesture_detectors[mode] = MediaPipeHandDetector()
+    return _gesture_detectors[mode]
 
 
 @app.route('/')
@@ -128,18 +132,22 @@ def evaluate():
 
 
 # ── /gesture (yifei) ───────────────────────────────────────────────────────
-# Accepts a single camera frame and returns the detected gesture + landmarks.
-# Using POST (not WebSocket) for simplicity — client throttles to 5-10 fps.
-# Payload: {"frame": "data:image/jpeg;base64,..."} or {"frame": "<base64>"}
-# Response: {"gesture": "open_palm"|"pinch"|"point"|"fist"|"none",
-#            "confidence": 0..1, "landmarks": [[x,y,z]..21], "handedness": "Left"|"Right"|null}
+# Accepts a single camera frame and a perception mode, returns gesture + landmarks.
+# Using POST (not WebSocket) for simplicity — client throttles to 10 fps.
+# Payload: {"frame": "<data-url or raw base64>", "mode": "dl" | "non_dl"}
+# Response: {"gesture": "rotate_left"|"rotate_right"|"zoom"|"point"|"fist"|"none",
+#            "confidence": 0..1, "landmarks": [...], "handedness": "Left"|"Right"|null,
+#            "bbox": [...], "palm_area": float, "index_tip": [x,y]|null, "mode": str}
 @app.route('/gesture', methods=['POST'])
 def gesture():
     data = request.json or {}
+    mode = data.get('mode', 'dl')
+    if mode not in ('dl', 'non_dl'):
+        mode = 'dl'
     frame_b64 = data.get('frame')
     if not frame_b64:
         return jsonify({"gesture": "none", "confidence": 0.0,
-                        "landmarks": [], "handedness": None,
+                        "landmarks": [], "handedness": None, "mode": mode,
                         "error": "missing 'frame' in payload"}), 400
     try:
         # Strip data URL prefix if present
@@ -148,18 +156,20 @@ def gesture():
         img_bytes = base64.b64decode(frame_b64)
     except Exception as e:
         return jsonify({"gesture": "none", "confidence": 0.0,
-                        "landmarks": [], "handedness": None,
+                        "landmarks": [], "handedness": None, "mode": mode,
                         "error": f"bad_base64: {e}"}), 400
 
     try:
-        detector = _get_gesture_detector()
+        detector = _get_gesture_detector(mode)
         result = detector.detect(img_bytes)
     except Exception as e:
         return jsonify({"gesture": "none", "confidence": 0.0,
-                        "landmarks": [], "handedness": None,
+                        "landmarks": [], "handedness": None, "mode": mode,
                         "error": f"detect_failed: {e}"}), 500
+    result["mode"] = mode
     return jsonify(result)
 
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    # threaded=True so /gesture (10fps) doesn't block /plan or vice versa.
+    app.run(debug=True, port=5000, threaded=True)
