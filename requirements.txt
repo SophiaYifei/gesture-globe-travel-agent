@@ -7,6 +7,6 @@ openai>=1.30.0
 torch>=2.0.0
 transformers>=4.35.0
 
-# DL perception (CLIP) — install separately if you have GPU/enough RAM:
-# torch>=2.0.0
-# transformers>=4.35.0
+# DL perception — hand gestures (MediaPipe) and terrain CLIP.
+mediapipe>=0.10.33
+flask-socketio>=5.6.0   # installed for future WebSocket path; /gesture uses POST for now

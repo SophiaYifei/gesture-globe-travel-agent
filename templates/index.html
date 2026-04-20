@@ -342,6 +342,72 @@
   /* ── Leaflet overrides ── */
   .leaflet-container { font-family: var(--sans); cursor: crosshair !important; }
   .leaflet-control-attribution { font-size: 9px; }
+
+  /* ── Gesture camera (top-left) ── */
+  #gesture-toggle {
+    position: absolute; top: 16px; left: 16px; z-index: 901;
+    background: rgba(26,23,20,0.78); backdrop-filter: blur(8px);
+    color: rgba(255,255,255,0.85); border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 8px; padding: 8px 14px; font-size: 12px; cursor: pointer;
+    font-family: var(--sans); transition: all 0.2s;
+    display: flex; align-items: center; gap: 6px;
+  }
+  #gesture-toggle:hover { color: #fff; background: rgba(26,23,20,0.92); }
+
+  #gesture-cam {
+    position: absolute; top: 16px; left: 16px; z-index: 910;
+    width: 220px; background: rgba(26,23,20,0.92); backdrop-filter: blur(12px);
+    border-radius: 12px; overflow: hidden;
+    border: 1px solid rgba(255,255,255,0.08);
+    box-shadow: 0 6px 24px rgba(0,0,0,0.3);
+    display: none;
+  }
+  #gesture-cam.active { display: block; }
+  #gesture-cam .cam-wrap {
+    position: relative; width: 100%; height: 165px; overflow: hidden; background: #000;
+  }
+  #gesture-cam video {
+    width: 100%; height: 100%; object-fit: cover;
+    transform: scaleX(-1); /* mirror for natural selfie view */
+  }
+  #gesture-cam .cam-close {
+    position: absolute; top: 6px; right: 6px;
+    background: rgba(0,0,0,0.6); color: #fff; border: none;
+    width: 22px; height: 22px; border-radius: 50%; cursor: pointer;
+    font-size: 12px; line-height: 1; z-index: 2;
+  }
+  #gesture-cam .cam-close:hover { background: rgba(196,82,42,0.9); }
+  #gesture-cam .cam-label {
+    position: absolute; bottom: 0; left: 0; right: 0;
+    padding: 10px 12px 12px;
+    background: linear-gradient(transparent, rgba(0,0,0,0.85));
+    color: #fff; pointer-events: none;
+  }
+  #gesture-cam .cam-label .emoji {
+    font-size: 18px; line-height: 1;
+  }
+  #gesture-cam .cam-label .name {
+    font-family: var(--serif); font-size: 15px; font-weight: 700;
+    letter-spacing: 0.02em; margin-left: 8px;
+  }
+  #gesture-cam .cam-label .meta {
+    font-size: 10px; color: rgba(255,255,255,0.65); margin-top: 2px;
+    letter-spacing: 0.04em; text-transform: uppercase;
+  }
+  #gesture-cam .cam-footer {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 12px; font-size: 11px; color: rgba(255,255,255,0.55);
+    border-top: 1px solid rgba(255,255,255,0.05);
+  }
+  #gesture-cam .conf-bar-wrap {
+    flex: 1; margin-left: 10px; height: 3px;
+    background: rgba(255,255,255,0.12); border-radius: 2px; overflow: hidden;
+  }
+  #gesture-cam .conf-bar {
+    height: 100%; background: var(--gold); width: 0%;
+    transition: width 0.15s ease-out;
+  }
+  #gesture-cam .cam-footer .fps { font-family: ui-monospace, monospace; }
 </style>
 </head>
 <body>
@@ -371,6 +437,25 @@
     <div id="eval-panel">
       <h3>Evaluation Results</h3>
       <div id="eval-content"></div>
+    </div>
+
+    <!-- Gesture camera (hidden until enabled) -->
+    <button id="gesture-toggle" onclick="enableGesture()">✋ Enable gestures</button>
+    <div id="gesture-cam">
+      <div class="cam-wrap">
+        <video id="gesture-video" autoplay playsinline muted></video>
+        <button class="cam-close" onclick="disableGesture()" title="Stop camera">✕</button>
+        <div class="cam-label">
+          <div>
+            <span class="emoji" id="gesture-emoji">·</span><span class="name" id="gesture-name">waiting…</span>
+          </div>
+          <div class="meta" id="gesture-meta">MediaPipe · DL</div>
+        </div>
+      </div>
+      <div class="cam-footer">
+        <span id="gesture-fps" class="fps">– fps</span>
+        <div class="conf-bar-wrap"><div class="conf-bar" id="gesture-conf-bar"></div></div>
+      </div>
     </div>
   </div>
 
@@ -971,6 +1056,138 @@ function renderEval(data) {
   html += `<button onclick="document.getElementById('eval-panel').classList.remove('show')" style="background:none;border:1px solid rgba(255,255,255,0.15);color:rgba(255,255,255,0.5);padding:5px 12px;border-radius:6px;cursor:pointer;font-size:11px;margin-top:4px;">Close</button>`;
   document.getElementById('eval-content').innerHTML = html;
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// GESTURE CAMERA — webcam → /gesture POST → label overlay
+// Not wired to globe control yet; this is perception-only for now.
+// ════════════════════════════════════════════════════════════════════════════
+
+const GESTURE_EMOJI = {
+  open_palm: '🖐️',
+  point:     '☝️',
+  fist:      '✊',
+  none:      '·',
+};
+const GESTURE_DISPLAY = {
+  open_palm: 'Open palm',
+  point:     'Pointing',
+  fist:      'Fist',
+  none:      'No hand',
+};
+const GESTURE_INTERVAL_MS = 200;  // 5 fps — more than enough for gesture labels
+const GESTURE_FRAME_WIDTH = 320;  // downscale before sending to save bandwidth/CPU
+
+let gestureStream = null;
+let gestureLoopId = null;
+let gestureInFlight = false;
+let gestureFrameCount = 0;
+let gestureFpsTimer = null;
+let gestureVideoEl = null;
+let gestureCanvas = null;
+
+async function enableGesture() {
+  if (gestureStream) return;
+  try {
+    gestureStream = await navigator.mediaDevices.getUserMedia({
+      video: { width: 640, height: 480, facingMode: 'user' },
+      audio: false,
+    });
+  } catch (err) {
+    alert('Camera access denied or unavailable: ' + err.message);
+    return;
+  }
+  gestureVideoEl = document.getElementById('gesture-video');
+  gestureVideoEl.srcObject = gestureStream;
+  // Hidden canvas for frame capture
+  gestureCanvas = document.createElement('canvas');
+  gestureCanvas.width = GESTURE_FRAME_WIDTH;
+  gestureCanvas.height = Math.round(GESTURE_FRAME_WIDTH * 0.75);  // 4:3
+
+  document.getElementById('gesture-cam').classList.add('active');
+  document.getElementById('gesture-toggle').style.display = 'none';
+
+  // Start capture loop once video has dimensions
+  await new Promise(res => {
+    if (gestureVideoEl.readyState >= 2) res();
+    else gestureVideoEl.onloadedmetadata = () => res();
+  });
+  gestureLoopId = setInterval(captureAndClassify, GESTURE_INTERVAL_MS);
+  gestureFpsTimer = setInterval(() => {
+    document.getElementById('gesture-fps').textContent =
+      `${(gestureFrameCount * 1000 / 1000).toFixed(0)} fps`;
+    gestureFrameCount = 0;
+  }, 1000);
+}
+
+function disableGesture() {
+  if (gestureLoopId) { clearInterval(gestureLoopId); gestureLoopId = null; }
+  if (gestureFpsTimer) { clearInterval(gestureFpsTimer); gestureFpsTimer = null; }
+  if (gestureStream) {
+    gestureStream.getTracks().forEach(t => t.stop());
+    gestureStream = null;
+  }
+  if (gestureVideoEl) gestureVideoEl.srcObject = null;
+  document.getElementById('gesture-cam').classList.remove('active');
+  document.getElementById('gesture-toggle').style.display = '';
+  setGestureLabel('none', 0);
+}
+
+async function captureAndClassify() {
+  if (gestureInFlight || !gestureVideoEl || !gestureCanvas) return;
+  if (gestureVideoEl.videoWidth === 0) return;
+
+  const ctx = gestureCanvas.getContext('2d');
+  // NOTE: don't mirror here — we send the raw frame to the backend so
+  // MediaPipe's handedness label stays consistent. The on-screen video is
+  // mirrored via CSS for UX only.
+  ctx.drawImage(gestureVideoEl, 0, 0, gestureCanvas.width, gestureCanvas.height);
+  const dataUrl = gestureCanvas.toDataURL('image/jpeg', 0.6);
+
+  gestureInFlight = true;
+  try {
+    const resp = await fetch('/gesture', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ frame: dataUrl }),
+    });
+    if (!resp.ok) { console.warn('/gesture HTTP', resp.status); return; }
+    const data = await resp.json();
+    setGestureLabel(data);
+    gestureFrameCount += 1;
+  } catch (err) {
+    console.warn('gesture request failed:', err);
+  } finally {
+    gestureInFlight = false;
+  }
+}
+
+function setGestureLabel(data) {
+  const gesture = (data && data.gesture) || 'none';
+  const confidence = (data && data.confidence) || 0;
+  const palmArea = (data && data.palm_area) || 0;
+
+  document.getElementById('gesture-emoji').textContent = GESTURE_EMOJI[gesture] || '·';
+  document.getElementById('gesture-name').textContent = GESTURE_DISPLAY[gesture] || gesture;
+
+  const meta = document.getElementById('gesture-meta');
+  if (gesture === 'none') {
+    meta.textContent = 'MediaPipe · DL';
+  } else if (gesture === 'open_palm') {
+    // Palm area drives zoom — show it so the user can calibrate.
+    meta.textContent = `zoom ${(palmArea * 100).toFixed(1)}% · conf ${(confidence * 100).toFixed(0)}%`;
+  } else {
+    meta.textContent = `conf ${(confidence * 100).toFixed(0)}% · MediaPipe · DL`;
+  }
+
+  // While palm is open, the "confidence bar" doubles as a palm-area gauge —
+  // visually ties the zoom-control signal to the bottom strip of the widget.
+  const barValue = gesture === 'open_palm' ? palmArea : confidence;
+  document.getElementById('gesture-conf-bar').style.width =
+    Math.round(Math.max(0, Math.min(1, barValue)) * 100) + '%';
+}
+
+// Release camera cleanly when tab closes
+window.addEventListener('beforeunload', disableGesture);
 
 // ── Initial render ────────────────────────────────────────────────────────
 renderPanel();

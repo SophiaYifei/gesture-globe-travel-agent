@@ -11,6 +11,18 @@ app = Flask(__name__)
 non_dl_agent = NonDLAgent()
 dl_agent = DLAgent()
 
+# Lazy-init gesture detector — loading the MediaPipe model adds ~1s to startup,
+# and we don't want that cost if the user is only using the map flow.
+_gesture_detector = None
+
+
+def _get_gesture_detector():
+    global _gesture_detector
+    if _gesture_detector is None:
+        from perception.mediapipe_hands import MediaPipeHandDetector
+        _gesture_detector = MediaPipeHandDetector()
+    return _gesture_detector
+
 
 @app.route('/')
 def index():
@@ -113,6 +125,40 @@ def evaluate():
     from evaluation.evaluator import run_evaluation
     results = run_evaluation()
     return jsonify(results)
+
+
+# ── /gesture (yifei) ───────────────────────────────────────────────────────
+# Accepts a single camera frame and returns the detected gesture + landmarks.
+# Using POST (not WebSocket) for simplicity — client throttles to 5-10 fps.
+# Payload: {"frame": "data:image/jpeg;base64,..."} or {"frame": "<base64>"}
+# Response: {"gesture": "open_palm"|"pinch"|"point"|"fist"|"none",
+#            "confidence": 0..1, "landmarks": [[x,y,z]..21], "handedness": "Left"|"Right"|null}
+@app.route('/gesture', methods=['POST'])
+def gesture():
+    data = request.json or {}
+    frame_b64 = data.get('frame')
+    if not frame_b64:
+        return jsonify({"gesture": "none", "confidence": 0.0,
+                        "landmarks": [], "handedness": None,
+                        "error": "missing 'frame' in payload"}), 400
+    try:
+        # Strip data URL prefix if present
+        if ',' in frame_b64:
+            frame_b64 = frame_b64.split(',', 1)[1]
+        img_bytes = base64.b64decode(frame_b64)
+    except Exception as e:
+        return jsonify({"gesture": "none", "confidence": 0.0,
+                        "landmarks": [], "handedness": None,
+                        "error": f"bad_base64: {e}"}), 400
+
+    try:
+        detector = _get_gesture_detector()
+        result = detector.detect(img_bytes)
+    except Exception as e:
+        return jsonify({"gesture": "none", "confidence": 0.0,
+                        "landmarks": [], "handedness": None,
+                        "error": f"detect_failed: {e}"}), 500
+    return jsonify(result)
 
 
 if __name__ == '__main__':
