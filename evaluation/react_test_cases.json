@@ -1,0 +1,107 @@
+[
+  {
+    "id": "couple_paris",
+    "name": "Couple Romantic Trip to Paris",
+    "user_message": "Plan a trip with the following details:\n- Destination: Paris, France\n- Dates: 2026-05-10 to 2026-05-15\n- Number of travelers: 2\n- Group type: couple\n- Travel style: culture, foodie, relaxation\n- Transportation preference: flight\n- Budget: 3000\n- Origin city (for flights): New York (JFK)\n- Additional requests: Romantic boutique hotels, candlelit dinners, art museums.",
+    "expected_tools": [
+      "search_flights",
+      "search_places",
+      "get_weather",
+      "find_vacation_rentals"
+    ],
+    "forbidden_tools": [],
+    "budget": 3000
+  },
+  {
+    "id": "friends_road_trip",
+    "name": "Friends Road Trip LA to Vegas",
+    "user_message": "Plan a trip with the following details:\n- Destination: Las Vegas, NV\n- Dates: 2026-06-12 to 2026-06-15\n- Number of travelers: 4\n- Group type: friends\n- Travel style: nightlife, foodie\n- Transportation preference: road trip / driving\n- Budget: Flexible\n- Origin city: Los Angeles, CA\n- Additional requests: Need a car rental in LA, fun nightlife, cool restaurants.",
+    "expected_tools": [
+      "search_places",
+      "get_weather",
+      "find_vacation_rentals"
+    ],
+    "forbidden_tools": [
+      "search_flights"
+    ],
+    "budget": null
+  },
+  {
+    "id": "solo_tokyo_budget",
+    "name": "Solo Budget Backpacker Tokyo",
+    "user_message": "Plan a trip with the following details:\n- Destination: Tokyo, Japan\n- Dates: 2026-07-01 to 2026-07-07\n- Number of travelers: 1\n- Group type: solo\n- Travel style: culture, foodie, adventure\n- Transportation preference: flight\n- Budget: 1000\n- Origin city: Los Angeles (LAX)\n- Additional requests: Budget hostels, cheap eats, free attractions.",
+    "expected_tools": [
+      "search_flights",
+      "search_places",
+      "get_weather",
+      "find_vacation_rentals"
+    ],
+    "forbidden_tools": [],
+    "budget": 1000
+  },
+  {
+    "id": "family_orlando",
+    "name": "Family Vacation Orlando",
+    "user_message": "Plan a trip with the following details:\n- Destination: Orlando, FL\n- Dates: 2026-07-20 to 2026-07-26\n- Number of travelers: 4\n- Group type: family\n- Travel style: adventure, relaxation\n- Transportation preference: flight\n- Budget: 5000\n- Origin city: Chicago (ORD)\n- Additional requests: Two adults, two kids ages 8 and 11. Theme parks, family hotels.",
+    "expected_tools": [
+      "search_flights",
+      "search_places",
+      "get_weather",
+      "find_vacation_rentals"
+    ],
+    "forbidden_tools": [],
+    "budget": 5000
+  },
+  {
+    "id": "luxury_bali",
+    "name": "Luxury Honeymoon Bali",
+    "user_message": "Plan a trip with the following details:\n- Destination: Bali, Indonesia\n- Dates: 2026-08-01 to 2026-08-08\n- Number of travelers: 2\n- Group type: couple\n- Travel style: relaxation, nature\n- Transportation preference: flight\n- Budget: Flexible - no limit\n- Origin city: New York (JFK)\n- Additional requests: Honeymoon, private villa with infinity pool, romantic beach dinners, couple's spa.",
+    "expected_tools": [
+      "search_flights",
+      "search_places",
+      "get_weather",
+      "find_vacation_rentals"
+    ],
+    "forbidden_tools": [],
+    "budget": null
+  },
+  {
+    "id": "weekend_nyc",
+    "name": "Weekend City Break NYC",
+    "user_message": "Plan a trip with the following details:\n- Destination: New York City\n- Dates: 2026-05-22 to 2026-05-24\n- Number of travelers: 2\n- Group type: friends\n- Travel style: culture, foodie, shopping\n- Transportation preference: flight\n- Budget: 800\n- Origin city: Boston (BOS)\n- Additional requests: Quick weekend trip, hit Broadway and great food.",
+    "expected_tools": [
+      "search_flights",
+      "search_places",
+      "get_weather",
+      "find_vacation_rentals"
+    ],
+    "forbidden_tools": [],
+    "budget": 800
+  },
+  {
+    "id": "adventure_costa_rica",
+    "name": "Adventure Trip Costa Rica",
+    "user_message": "Plan a trip with the following details:\n- Destination: Costa Rica\n- Dates: 2026-09-10 to 2026-09-17\n- Number of travelers: 2\n- Group type: friends\n- Travel style: adventure, nature\n- Transportation preference: flight\n- Budget: 2000\n- Origin city: Miami (MIA)\n- Additional requests: Ziplining, rainforest hikes, surfing.",
+    "expected_tools": [
+      "search_flights",
+      "search_places",
+      "get_weather",
+      "find_vacation_rentals"
+    ],
+    "forbidden_tools": [],
+    "budget": 2000
+  },
+  {
+    "id": "business_leisure_london",
+    "name": "Business + Leisure London",
+    "user_message": "Plan a trip with the following details:\n- Destination: London, UK\n- Dates: 2026-06-05 to 2026-06-11\n- Number of travelers: 1\n- Group type: solo\n- Travel style: culture, foodie\n- Transportation preference: flight\n- Budget: 4000\n- Origin city: San Francisco (SFO)\n- Additional requests: Business meetings first 3 days, leisure last 3 days. Need a quiet hotel near the City of London.",
+    "expected_tools": [
+      "search_flights",
+      "search_places",
+      "get_weather",
+      "find_vacation_rentals"
+    ],
+    "forbidden_tools": [],
+    "budget": 4000
+  }
+]

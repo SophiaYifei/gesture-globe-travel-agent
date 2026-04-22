@@ -1,0 +1,1584 @@
+{
+  "non_dl": [
+    {
+      "location": "Nepal (28.0, 86.9)",
+      "notes": "",
+      "predicted_region": "Nepal",
+      "predicted_biome": "diverse",
+      "true_region": "Nepal",
+      "true_biome": "mountain",
+      "completed": true,
+      "num_tool_calls": 8,
+      "tools_used": [
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places"
+      ],
+      "accuracy": {
+        "name_match": true,
+        "biome_exact": false,
+        "biome_partial": false,
+        "score": 0.5
+      },
+      "keyword_relevance": {
+        "score": 0.0,
+        "matched_keywords": [],
+        "total_keywords": 6
+      },
+      "judge_scores": {
+        "relevance": 4,
+        "specificity": 4,
+        "completeness": 3,
+        "notes_adherence": null,
+        "comment": "Strong Kathmandu Valley cultural coverage with real places, but the itinerary is truncated and light on Nepal-specific food and practical detail."
+      },
+      "judge_avg": 3.67,
+      "estimated_cost": null,
+      "response_time_ms": 8591.25
+    },
+    {
+      "location": "Bali (-8.4, 115.2)",
+      "notes": "",
+      "predicted_region": "Bali",
+      "predicted_biome": "island",
+      "true_region": "Bali",
+      "true_biome": "island",
+      "completed": true,
+      "num_tool_calls": 8,
+      "tools_used": [
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places"
+      ],
+      "accuracy": {
+        "name_match": true,
+        "biome_exact": true,
+        "biome_partial": true,
+        "score": 1.0
+      },
+      "keyword_relevance": {
+        "score": 0.5,
+        "matched_keywords": [
+          "ferry",
+          "beach",
+          "dive"
+        ],
+        "total_keywords": 6
+      },
+      "judge_scores": {
+        "relevance": 4,
+        "specificity": 4,
+        "completeness": 2,
+        "notes_adherence": null,
+        "comment": "It includes real Bali highlights and some dining picks, but the itinerary is truncated and lacks sufficient practical detail."
+      },
+      "judge_avg": 3.33,
+      "estimated_cost": null,
+      "response_time_ms": 9425.94
+    },
+    {
+      "location": "France (48.9, 2.4)",
+      "notes": "",
+      "predicted_region": "France",
+      "predicted_biome": "mixed",
+      "true_region": "France",
+      "true_biome": "mixed",
+      "completed": true,
+      "num_tool_calls": 8,
+      "tools_used": [
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places"
+      ],
+      "accuracy": {
+        "name_match": true,
+        "biome_exact": true,
+        "biome_partial": true,
+        "score": 1.0
+      },
+      "keyword_relevance": {
+        "score": 0.5,
+        "matched_keywords": [
+          "museum",
+          "tour",
+          "food"
+        ],
+        "total_keywords": 6
+      },
+      "judge_scores": {
+        "relevance": 4,
+        "specificity": 4,
+        "completeness": 2,
+        "notes_adherence": null,
+        "comment": "Strong Paris-focused highlights and some real venues, but it is incomplete and includes a few mismatched dining picks and thin practical advice."
+      },
+      "judge_avg": 3.33,
+      "estimated_cost": null,
+      "response_time_ms": 7987.21
+    },
+    {
+      "location": "Mexico (23.6, -102.6)",
+      "notes": "",
+      "predicted_region": "Mexico",
+      "predicted_biome": "coastal",
+      "true_region": "Mexico",
+      "true_biome": "coastal",
+      "completed": true,
+      "num_tool_calls": 8,
+      "tools_used": [
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places"
+      ],
+      "accuracy": {
+        "name_match": true,
+        "biome_exact": true,
+        "biome_partial": true,
+        "score": 1.0
+      },
+      "keyword_relevance": {
+        "score": 0.167,
+        "matched_keywords": [
+          "dive"
+        ],
+        "total_keywords": 6
+      },
+      "judge_scores": {
+        "relevance": 2,
+        "specificity": 5,
+        "completeness": 3,
+        "notes_adherence": null,
+        "comment": "It names many real Mexican highlights and restaurants, but it mixes distant inland and coastal locations without practical coherence."
+      },
+      "judge_avg": 3.33,
+      "estimated_cost": null,
+      "response_time_ms": 5916.09
+    },
+    {
+      "location": "Iceland (65.0, -19.0)",
+      "notes": "",
+      "predicted_region": "Iceland",
+      "predicted_biome": "tundra",
+      "true_region": "Iceland",
+      "true_biome": "tundra",
+      "completed": true,
+      "num_tool_calls": 8,
+      "tools_used": [
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places"
+      ],
+      "accuracy": {
+        "name_match": true,
+        "biome_exact": true,
+        "biome_partial": true,
+        "score": 1.0
+      },
+      "keyword_relevance": {
+        "score": 0.0,
+        "matched_keywords": [],
+        "total_keywords": 6
+      },
+      "judge_scores": {
+        "relevance": 4,
+        "specificity": 4,
+        "completeness": 3,
+        "notes_adherence": null,
+        "comment": "Strong Iceland-specific picks, but the plan feels truncated and light on logistics for such far-apart day trips."
+      },
+      "judge_avg": 3.67,
+      "estimated_cost": null,
+      "response_time_ms": 5418.02
+    },
+    {
+      "location": "Kenya (-1.3, 36.8)",
+      "notes": "",
+      "predicted_region": "Kenya",
+      "predicted_biome": "savanna",
+      "true_region": "Kenya",
+      "true_biome": "savanna",
+      "completed": true,
+      "num_tool_calls": 8,
+      "tools_used": [
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places"
+      ],
+      "accuracy": {
+        "name_match": true,
+        "biome_exact": true,
+        "biome_partial": true,
+        "score": 1.0
+      },
+      "keyword_relevance": {
+        "score": 0.167,
+        "matched_keywords": [
+          "safari"
+        ],
+        "total_keywords": 6
+      },
+      "judge_scores": {
+        "relevance": 3,
+        "specificity": 4,
+        "completeness": 2,
+        "notes_adherence": null,
+        "comment": "It names real Kenyan highlights and restaurants, but the plan is incomplete and includes unrealistic long-distance day trips."
+      },
+      "judge_avg": 3.0,
+      "estimated_cost": null,
+      "response_time_ms": 5714.66
+    },
+    {
+      "location": "Greece (38.0, 23.7)",
+      "notes": "",
+      "predicted_region": "Greece",
+      "predicted_biome": "coastal",
+      "true_region": "Greece",
+      "true_biome": "coastal",
+      "completed": true,
+      "num_tool_calls": 8,
+      "tools_used": [
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places"
+      ],
+      "accuracy": {
+        "name_match": true,
+        "biome_exact": true,
+        "biome_partial": true,
+        "score": 1.0
+      },
+      "keyword_relevance": {
+        "score": 0.167,
+        "matched_keywords": [
+          "dive"
+        ],
+        "total_keywords": 6
+      },
+      "judge_scores": {
+        "relevance": 3,
+        "specificity": 4,
+        "completeness": 2,
+        "notes_adherence": null,
+        "comment": "It names real Greek attractions and restaurants, but the plan is truncated and geographically inconsistent for a short coastal trip."
+      },
+      "judge_avg": 3.0,
+      "estimated_cost": null,
+      "response_time_ms": 9406.22
+    },
+    {
+      "location": "Brazil (-3.5, -62.2)",
+      "notes": "",
+      "predicted_region": "Brazil",
+      "predicted_biome": "rainforest",
+      "true_region": "Brazil",
+      "true_biome": "rainforest",
+      "completed": true,
+      "num_tool_calls": 8,
+      "tools_used": [
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places"
+      ],
+      "accuracy": {
+        "name_match": true,
+        "biome_exact": true,
+        "biome_partial": true,
+        "score": 1.0
+      },
+      "keyword_relevance": {
+        "score": 0.333,
+        "matched_keywords": [
+          "jungle",
+          "wildlife"
+        ],
+        "total_keywords": 6
+      },
+      "judge_scores": {
+        "relevance": 2,
+        "specificity": 4,
+        "completeness": 2,
+        "notes_adherence": null,
+        "comment": "It names real places, but the plan is geographically inconsistent for a rainforest-focused Brazil trip and is incomplete."
+      },
+      "judge_avg": 2.67,
+      "estimated_cost": null,
+      "response_time_ms": 8961.43
+    },
+    {
+      "location": "India (27.2, 78.0)",
+      "notes": "",
+      "predicted_region": "India",
+      "predicted_biome": "diverse",
+      "true_region": "India",
+      "true_biome": "diverse",
+      "completed": true,
+      "num_tool_calls": 8,
+      "tools_used": [
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places"
+      ],
+      "accuracy": {
+        "name_match": true,
+        "biome_exact": true,
+        "biome_partial": true,
+        "score": 1.0
+      },
+      "keyword_relevance": {
+        "score": 0.167,
+        "matched_keywords": [
+          "food"
+        ],
+        "total_keywords": 6
+      },
+      "judge_scores": {
+        "relevance": 2,
+        "specificity": 4,
+        "completeness": 2,
+        "notes_adherence": null,
+        "comment": "It names famous Indian places but is impractical and fragmented across distant cities with limited useful planning details."
+      },
+      "judge_avg": 2.67,
+      "estimated_cost": null,
+      "response_time_ms": 6042.69
+    },
+    {
+      "location": "Japan (35.7, 139.7)",
+      "notes": "",
+      "predicted_region": "Japan",
+      "predicted_biome": "island",
+      "true_region": "Japan",
+      "true_biome": "island",
+      "completed": true,
+      "num_tool_calls": 8,
+      "tools_used": [
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places"
+      ],
+      "accuracy": {
+        "name_match": true,
+        "biome_exact": true,
+        "biome_partial": true,
+        "score": 1.0
+      },
+      "keyword_relevance": {
+        "score": 0.333,
+        "matched_keywords": [
+          "ferry",
+          "dive"
+        ],
+        "total_keywords": 6
+      },
+      "judge_scores": {
+        "relevance": 2,
+        "specificity": 4,
+        "completeness": 2,
+        "notes_adherence": null,
+        "comment": "It names real Japanese sights and eateries, but the plan is fragmented across distant cities with weak practical guidance and appears incomplete."
+      },
+      "judge_avg": 2.67,
+      "estimated_cost": null,
+      "response_time_ms": 6703.3
+    },
+    {
+      "location": "Australia (-33.9, 151.2)",
+      "notes": "",
+      "predicted_region": "Australia",
+      "predicted_biome": "outback",
+      "true_region": "Australia",
+      "true_biome": "outback",
+      "completed": true,
+      "num_tool_calls": 8,
+      "tools_used": [
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places"
+      ],
+      "accuracy": {
+        "name_match": true,
+        "biome_exact": true,
+        "biome_partial": true,
+        "score": 1.0
+      },
+      "keyword_relevance": {
+        "score": 0.167,
+        "matched_keywords": [
+          "nature"
+        ],
+        "total_keywords": 6
+      },
+      "judge_scores": {
+        "relevance": 1,
+        "specificity": 3,
+        "completeness": 2,
+        "notes_adherence": null,
+        "comment": "It names real places but is badly mismatched to an Australia outback trip and feels incomplete."
+      },
+      "judge_avg": 2.0,
+      "estimated_cost": null,
+      "response_time_ms": 7189.58
+    },
+    {
+      "location": "London (51.5, -0.1)",
+      "notes": "",
+      "predicted_region": "London",
+      "predicted_biome": "forest",
+      "true_region": "London",
+      "true_biome": "forest",
+      "completed": true,
+      "num_tool_calls": 8,
+      "tools_used": [
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places"
+      ],
+      "accuracy": {
+        "name_match": true,
+        "biome_exact": true,
+        "biome_partial": true,
+        "score": 1.0
+      },
+      "keyword_relevance": {
+        "score": 0.5,
+        "matched_keywords": [
+          "park",
+          "nature",
+          "garden"
+        ],
+        "total_keywords": 6
+      },
+      "judge_scores": {
+        "relevance": 5,
+        "specificity": 4,
+        "completeness": 3,
+        "notes_adherence": null,
+        "comment": "Strong London-specific sights and dining picks, but the itinerary appears truncated and light on practical logistics."
+      },
+      "judge_avg": 4.0,
+      "estimated_cost": null,
+      "response_time_ms": 7041.95
+    },
+    {
+      "location": "France (notes) (48.9, 2.4)",
+      "notes": "two people are vegan and one has a severe nut allergy, please suggest safe restaurants",
+      "predicted_region": "France",
+      "predicted_biome": "mixed",
+      "true_region": "France",
+      "true_biome": "mixed",
+      "completed": true,
+      "num_tool_calls": 8,
+      "tools_used": [
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places"
+      ],
+      "accuracy": {
+        "name_match": true,
+        "biome_exact": true,
+        "biome_partial": true,
+        "score": 1.0
+      },
+      "keyword_relevance": {
+        "score": 0.5,
+        "matched_keywords": [
+          "museum",
+          "tour",
+          "food"
+        ],
+        "total_keywords": 6
+      },
+      "judge_scores": {
+        "relevance": 4,
+        "specificity": 4,
+        "completeness": 3,
+        "notes_adherence": 1,
+        "comment": "Good Paris sightseeing specificity, but it fails the vegan and severe nut-allergy restaurant request."
+      },
+      "judge_avg": 3.0,
+      "estimated_cost": null,
+      "response_time_ms": 6992.13
+    },
+    {
+      "location": "Japan (notes) (35.7, 139.7)",
+      "notes": "travelling with a 4 year old and a 7 year old, need kid-friendly activities and stroller-accessible spots",
+      "predicted_region": "Japan",
+      "predicted_biome": "island",
+      "true_region": "Japan",
+      "true_biome": "island",
+      "completed": true,
+      "num_tool_calls": 8,
+      "tools_used": [
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places"
+      ],
+      "accuracy": {
+        "name_match": true,
+        "biome_exact": true,
+        "biome_partial": true,
+        "score": 1.0
+      },
+      "keyword_relevance": {
+        "score": 0.333,
+        "matched_keywords": [
+          "ferry",
+          "dive"
+        ],
+        "total_keywords": 6
+      },
+      "judge_scores": {
+        "relevance": 2,
+        "specificity": 4,
+        "completeness": 2,
+        "notes_adherence": 1,
+        "comment": "It names real places, but the plan is fragmented across distant cities, incomplete, and poorly suited to young kids or stroller use."
+      },
+      "judge_avg": 2.25,
+      "estimated_cost": null,
+      "response_time_ms": 11676.13
+    },
+    {
+      "location": "Greece (notes) (38.0, 23.7)",
+      "notes": "one traveller uses a wheelchair, please ensure all recommendations are accessible",
+      "predicted_region": "Greece",
+      "predicted_biome": "coastal",
+      "true_region": "Greece",
+      "true_biome": "coastal",
+      "completed": true,
+      "num_tool_calls": 8,
+      "tools_used": [
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places"
+      ],
+      "accuracy": {
+        "name_match": true,
+        "biome_exact": true,
+        "biome_partial": true,
+        "score": 1.0
+      },
+      "keyword_relevance": {
+        "score": 0.167,
+        "matched_keywords": [
+          "dive"
+        ],
+        "total_keywords": 6
+      },
+      "judge_scores": {
+        "relevance": 3,
+        "specificity": 4,
+        "completeness": 3,
+        "notes_adherence": 1,
+        "comment": "It names real Greek sights and restaurants, but it is incomplete and fails the wheelchair accessibility request."
+      },
+      "judge_avg": 2.75,
+      "estimated_cost": null,
+      "response_time_ms": 7033.41
+    },
+    {
+      "location": "Bali (notes) (-8.4, 115.2)",
+      "notes": "this is our honeymoon, we want romantic dinners, a couples spa, and a private villa",
+      "predicted_region": "Bali",
+      "predicted_biome": "island",
+      "true_region": "Bali",
+      "true_biome": "island",
+      "completed": true,
+      "num_tool_calls": 8,
+      "tools_used": [
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places"
+      ],
+      "accuracy": {
+        "name_match": true,
+        "biome_exact": true,
+        "biome_partial": true,
+        "score": 1.0
+      },
+      "keyword_relevance": {
+        "score": 0.5,
+        "matched_keywords": [
+          "ferry",
+          "beach",
+          "dive"
+        ],
+        "total_keywords": 6
+      },
+      "judge_scores": {
+        "relevance": 4,
+        "specificity": 4,
+        "completeness": 2,
+        "notes_adherence": 2,
+        "comment": "It includes real Bali highlights and venues, but it feels incomplete and only weakly addresses the honeymoon requests."
+      },
+      "judge_avg": 3.0,
+      "estimated_cost": null,
+      "response_time_ms": 6439.25
+    },
+    {
+      "location": "Nepal (notes) (28.0, 86.9)",
+      "notes": "we are photography enthusiasts focused on landscape and wildlife, suggest golden hour locations and local guides",
+      "predicted_region": "Nepal",
+      "predicted_biome": "diverse",
+      "true_region": "Nepal",
+      "true_biome": "mountain",
+      "completed": true,
+      "num_tool_calls": 8,
+      "tools_used": [
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places"
+      ],
+      "accuracy": {
+        "name_match": true,
+        "biome_exact": false,
+        "biome_partial": false,
+        "score": 0.5
+      },
+      "keyword_relevance": {
+        "score": 0.0,
+        "matched_keywords": [],
+        "total_keywords": 6
+      },
+      "judge_scores": {
+        "relevance": 3,
+        "specificity": 3,
+        "completeness": 2,
+        "notes_adherence": 1,
+        "comment": "It names real Kathmandu sights but misses Nepal\u2019s mountain/wildlife photography focus, golden hour spots, and local guide suggestions."
+      },
+      "judge_avg": 2.25,
+      "estimated_cost": null,
+      "response_time_ms": 12561.97
+    }
+  ],
+  "dl": [
+    {
+      "location": "Nepal (28.0, 86.9)",
+      "notes": "",
+      "predicted_region": "Nepal",
+      "predicted_biome": "diverse",
+      "true_region": "Nepal",
+      "true_biome": "mountain",
+      "completed": true,
+      "iterations": 3,
+      "num_tool_calls": 14,
+      "tools_used": [
+        "get_weather",
+        "search_flights",
+        "search_places",
+        "find_vacation_rentals",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places"
+      ],
+      "accuracy": {
+        "name_match": true,
+        "biome_exact": false,
+        "biome_partial": false,
+        "score": 0.5
+      },
+      "keyword_relevance": {
+        "score": 0.0,
+        "matched_keywords": [],
+        "total_keywords": 6
+      },
+      "judge_scores": {
+        "relevance": 5,
+        "specificity": 4,
+        "completeness": 2,
+        "notes_adherence": null,
+        "comment": "Relevant and fairly specific to Kathmandu, but the itinerary is incomplete and lacks dining and practical guidance."
+      },
+      "judge_avg": 3.67,
+      "estimated_cost": 1280.0,
+      "response_time_ms": 38022.76
+    },
+    {
+      "location": "Bali (-8.4, 115.2)",
+      "notes": "",
+      "predicted_region": "Bali",
+      "predicted_biome": "island",
+      "true_region": "Bali",
+      "true_biome": "island",
+      "completed": true,
+      "iterations": 3,
+      "num_tool_calls": 17,
+      "tools_used": [
+        "get_weather",
+        "search_flights",
+        "search_places",
+        "search_places",
+        "find_vacation_rentals",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places"
+      ],
+      "accuracy": {
+        "name_match": true,
+        "biome_exact": true,
+        "biome_partial": true,
+        "score": 1.0
+      },
+      "keyword_relevance": {
+        "score": 0.167,
+        "matched_keywords": [
+          "beach"
+        ],
+        "total_keywords": 6
+      },
+      "judge_scores": {
+        "relevance": 5,
+        "specificity": 4,
+        "completeness": 3,
+        "notes_adherence": null,
+        "comment": "Very relevant and fairly specific, but the itinerary appears truncated and lacks full daily plans and practical details."
+      },
+      "judge_avg": 4.0,
+      "estimated_cost": 1650.0,
+      "response_time_ms": 47013.65
+    },
+    {
+      "location": "France (48.9, 2.4)",
+      "notes": "",
+      "predicted_region": "France",
+      "predicted_biome": "mixed",
+      "true_region": "France",
+      "true_biome": "mixed",
+      "completed": true,
+      "iterations": 4,
+      "num_tool_calls": 19,
+      "tools_used": [
+        "get_weather",
+        "search_flights",
+        "search_places",
+        "search_places",
+        "find_vacation_rentals",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places"
+      ],
+      "accuracy": {
+        "name_match": true,
+        "biome_exact": true,
+        "biome_partial": true,
+        "score": 1.0
+      },
+      "keyword_relevance": {
+        "score": 0.667,
+        "matched_keywords": [
+          "museum",
+          "tour",
+          "market",
+          "food"
+        ],
+        "total_keywords": 6
+      },
+      "judge_scores": {
+        "relevance": 5,
+        "specificity": 4,
+        "completeness": 3,
+        "notes_adherence": null,
+        "comment": "The Paris-focused suggestions are highly relevant and fairly specific, but the itinerary is truncated and missing enough dining and practical detail to feel complete."
+      },
+      "judge_avg": 4.0,
+      "estimated_cost": 2400.0,
+      "response_time_ms": 42046.93
+    },
+    {
+      "location": "Mexico (23.6, -102.6)",
+      "notes": "",
+      "predicted_region": "Mexico",
+      "predicted_biome": "coastal",
+      "true_region": "Mexico",
+      "true_biome": "coastal",
+      "completed": true,
+      "iterations": 4,
+      "num_tool_calls": 10,
+      "tools_used": [
+        "get_weather",
+        "search_flights",
+        "search_places",
+        "find_vacation_rentals",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places"
+      ],
+      "accuracy": {
+        "name_match": true,
+        "biome_exact": true,
+        "biome_partial": true,
+        "score": 1.0
+      },
+      "keyword_relevance": {
+        "score": 0.0,
+        "matched_keywords": [],
+        "total_keywords": 6
+      },
+      "judge_scores": {
+        "relevance": 2,
+        "specificity": 4,
+        "completeness": 3,
+        "notes_adherence": null,
+        "comment": "Specific Mexico City details are strong, but the itinerary is poorly matched to the stated coastal Mexico destination and lacks actual day-by-day activities and dining plans."
+      },
+      "judge_avg": 3.0,
+      "estimated_cost": 1550.0,
+      "response_time_ms": 34437.13
+    },
+    {
+      "location": "Iceland (65.0, -19.0)",
+      "notes": "",
+      "predicted_region": "Iceland",
+      "predicted_biome": "tundra",
+      "true_region": "Iceland",
+      "true_biome": "tundra",
+      "completed": true,
+      "iterations": 4,
+      "num_tool_calls": 9,
+      "tools_used": [
+        "get_weather",
+        "search_flights",
+        "search_places",
+        "find_vacation_rentals",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places"
+      ],
+      "accuracy": {
+        "name_match": true,
+        "biome_exact": true,
+        "biome_partial": true,
+        "score": 1.0
+      },
+      "keyword_relevance": {
+        "score": 0.333,
+        "matched_keywords": [
+          "glacier",
+          "lava"
+        ],
+        "total_keywords": 6
+      },
+      "judge_scores": {
+        "relevance": 4,
+        "specificity": 3,
+        "completeness": 2,
+        "notes_adherence": null,
+        "comment": "The Iceland lodging and transit details are relevant, but the itinerary is incomplete and lacks enough concrete activities and dining recommendations."
+      },
+      "judge_avg": 3.0,
+      "estimated_cost": 2050.0,
+      "response_time_ms": 28422.31
+    },
+    {
+      "location": "Kenya (-1.3, 36.8)",
+      "notes": "",
+      "predicted_region": "Kenya",
+      "predicted_biome": "savanna",
+      "true_region": "Kenya",
+      "true_biome": "savanna",
+      "completed": true,
+      "iterations": 5,
+      "num_tool_calls": 10,
+      "tools_used": [
+        "get_weather",
+        "search_flights",
+        "search_places",
+        "find_vacation_rentals",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places"
+      ],
+      "accuracy": {
+        "name_match": true,
+        "biome_exact": true,
+        "biome_partial": true,
+        "score": 1.0
+      },
+      "keyword_relevance": {
+        "score": 0.333,
+        "matched_keywords": [
+          "safari",
+          "wildlife"
+        ],
+        "total_keywords": 6
+      },
+      "judge_scores": {
+        "relevance": 5,
+        "specificity": 4,
+        "completeness": 3,
+        "notes_adherence": null,
+        "comment": "The Nairobi-focused plan is relevant and fairly specific, but the itinerary appears truncated and lacks full dining and practical detail."
+      },
+      "judge_avg": 4.0,
+      "estimated_cost": 1800.0,
+      "response_time_ms": 32587.77
+    },
+    {
+      "location": "Greece (38.0, 23.7)",
+      "notes": "",
+      "predicted_region": "Greece",
+      "predicted_biome": "coastal",
+      "true_region": "Greece",
+      "true_biome": "coastal",
+      "completed": true,
+      "iterations": 5,
+      "num_tool_calls": 15,
+      "tools_used": [
+        "get_weather",
+        "search_flights",
+        "search_places",
+        "find_vacation_rentals",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places"
+      ],
+      "accuracy": {
+        "name_match": true,
+        "biome_exact": true,
+        "biome_partial": true,
+        "score": 1.0
+      },
+      "keyword_relevance": {
+        "score": 0.0,
+        "matched_keywords": [],
+        "total_keywords": 6
+      },
+      "judge_scores": {
+        "relevance": 5,
+        "specificity": 3,
+        "completeness": 3,
+        "notes_adherence": null,
+        "comment": "Athens-focused recommendations fit Greece well, but the itinerary is cut off and lacks full day-by-day and practical detail."
+      },
+      "judge_avg": 3.67,
+      "estimated_cost": 1900.0,
+      "response_time_ms": 42653.1
+    },
+    {
+      "location": "Brazil (-3.5, -62.2)",
+      "notes": "",
+      "predicted_region": "Brazil",
+      "predicted_biome": "rainforest",
+      "true_region": "Brazil",
+      "true_biome": "rainforest",
+      "completed": true,
+      "iterations": 5,
+      "num_tool_calls": 9,
+      "tools_used": [
+        "get_weather",
+        "search_flights",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "find_vacation_rentals",
+        "search_places"
+      ],
+      "accuracy": {
+        "name_match": true,
+        "biome_exact": true,
+        "biome_partial": true,
+        "score": 1.0
+      },
+      "keyword_relevance": {
+        "score": 0.0,
+        "matched_keywords": [],
+        "total_keywords": 6
+      },
+      "judge_scores": {
+        "relevance": 4,
+        "specificity": 4,
+        "completeness": 3,
+        "notes_adherence": null,
+        "comment": "Relevant Rio picks with real places, but the itinerary is truncated and not fully complete."
+      },
+      "judge_avg": 3.67,
+      "estimated_cost": 1850.0,
+      "response_time_ms": 31951.49
+    },
+    {
+      "location": "India (27.2, 78.0)",
+      "notes": "",
+      "predicted_region": "India",
+      "predicted_biome": "diverse",
+      "true_region": "India",
+      "true_biome": "diverse",
+      "completed": true,
+      "iterations": 3,
+      "num_tool_calls": 12,
+      "tools_used": [
+        "get_weather",
+        "search_flights",
+        "search_places",
+        "find_vacation_rentals",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places"
+      ],
+      "accuracy": {
+        "name_match": true,
+        "biome_exact": true,
+        "biome_partial": true,
+        "score": 1.0
+      },
+      "keyword_relevance": {
+        "score": 0.333,
+        "matched_keywords": [
+          "market",
+          "food"
+        ],
+        "total_keywords": 6
+      },
+      "judge_scores": {
+        "relevance": 5,
+        "specificity": 4,
+        "completeness": 3,
+        "notes_adherence": null,
+        "comment": "Delhi-focused monuments, neighborhoods, and hotels are relevant and fairly specific, but the day-by-day plan is cut off and incomplete."
+      },
+      "judge_avg": 4.0,
+      "estimated_cost": 2150.0,
+      "response_time_ms": 33190.0
+    },
+    {
+      "location": "Japan (35.7, 139.7)",
+      "notes": "",
+      "predicted_region": "Japan",
+      "predicted_biome": "island",
+      "true_region": "Japan",
+      "true_biome": "island",
+      "completed": true,
+      "iterations": 2,
+      "num_tool_calls": 10,
+      "tools_used": [
+        "get_weather",
+        "search_flights",
+        "search_places",
+        "find_vacation_rentals",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places"
+      ],
+      "accuracy": {
+        "name_match": true,
+        "biome_exact": true,
+        "biome_partial": true,
+        "score": 1.0
+      },
+      "keyword_relevance": {
+        "score": 0.0,
+        "matched_keywords": [],
+        "total_keywords": 6
+      },
+      "judge_scores": {
+        "relevance": 5,
+        "specificity": 3,
+        "completeness": 2,
+        "notes_adherence": null,
+        "comment": "Relevant to Tokyo with some real hotel details, but the itinerary itself is truncated and incomplete."
+      },
+      "judge_avg": 3.33,
+      "estimated_cost": 2000.0,
+      "response_time_ms": 28371.07
+    },
+    {
+      "location": "Australia (-33.9, 151.2)",
+      "notes": "",
+      "predicted_region": "Australia",
+      "predicted_biome": "outback",
+      "true_region": "Australia",
+      "true_biome": "outback",
+      "completed": true,
+      "iterations": 6,
+      "num_tool_calls": 11,
+      "tools_used": [
+        "get_weather",
+        "search_flights",
+        "search_places",
+        "find_vacation_rentals",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places"
+      ],
+      "accuracy": {
+        "name_match": true,
+        "biome_exact": true,
+        "biome_partial": true,
+        "score": 1.0
+      },
+      "keyword_relevance": {
+        "score": 0.0,
+        "matched_keywords": [],
+        "total_keywords": 6
+      },
+      "judge_scores": {
+        "relevance": 1,
+        "specificity": 3,
+        "completeness": 2,
+        "notes_adherence": null,
+        "comment": "It names real Sydney spots, but it is mismatched to an outback Australia trip and appears incomplete."
+      },
+      "judge_avg": 2.0,
+      "estimated_cost": 2300.0,
+      "response_time_ms": 38479.12
+    },
+    {
+      "location": "London (51.5, -0.1)",
+      "notes": "",
+      "predicted_region": "London",
+      "predicted_biome": "forest",
+      "true_region": "London",
+      "true_biome": "forest",
+      "completed": true,
+      "iterations": 3,
+      "num_tool_calls": 12,
+      "tools_used": [
+        "get_weather",
+        "search_flights",
+        "search_places",
+        "find_vacation_rentals",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places"
+      ],
+      "accuracy": {
+        "name_match": true,
+        "biome_exact": true,
+        "biome_partial": true,
+        "score": 1.0
+      },
+      "keyword_relevance": {
+        "score": 0.0,
+        "matched_keywords": [],
+        "total_keywords": 6
+      },
+      "judge_scores": {
+        "relevance": 5,
+        "specificity": 4,
+        "completeness": 3,
+        "notes_adherence": null,
+        "comment": "The itinerary is highly relevant and fairly specific to London, but the visible portion is incomplete and lacks full dining and practical coverage."
+      },
+      "judge_avg": 4.0,
+      "estimated_cost": 2000.0,
+      "response_time_ms": 32156.18
+    },
+    {
+      "location": "France (notes) (48.9, 2.4)",
+      "notes": "two people are vegan and one has a severe nut allergy, please suggest safe restaurants",
+      "predicted_region": "France",
+      "predicted_biome": "mixed",
+      "true_region": "France",
+      "true_biome": "mixed",
+      "completed": true,
+      "iterations": 4,
+      "num_tool_calls": 13,
+      "tools_used": [
+        "get_weather",
+        "search_flights",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places"
+      ],
+      "accuracy": {
+        "name_match": true,
+        "biome_exact": true,
+        "biome_partial": true,
+        "score": 1.0
+      },
+      "keyword_relevance": {
+        "score": 0.667,
+        "matched_keywords": [
+          "museum",
+          "tour",
+          "culture",
+          "food"
+        ],
+        "total_keywords": 6
+      },
+      "judge_scores": {
+        "relevance": 5,
+        "specificity": 4,
+        "completeness": 2,
+        "notes_adherence": 3,
+        "comment": "Paris-focused ideas are relevant and specific, but the itinerary is incomplete and only partially addresses vegan and severe nut-allergy safety."
+      },
+      "judge_avg": 3.5,
+      "estimated_cost": 2300.0,
+      "response_time_ms": 38091.15
+    },
+    {
+      "location": "Japan (notes) (35.7, 139.7)",
+      "notes": "travelling with a 4 year old and a 7 year old, need kid-friendly activities and stroller-accessible spots",
+      "predicted_region": "Japan",
+      "predicted_biome": "island",
+      "true_region": "Japan",
+      "true_biome": "island",
+      "completed": true,
+      "iterations": 3,
+      "num_tool_calls": 9,
+      "tools_used": [
+        "get_weather",
+        "search_flights",
+        "search_places",
+        "find_vacation_rentals",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places"
+      ],
+      "accuracy": {
+        "name_match": true,
+        "biome_exact": true,
+        "biome_partial": true,
+        "score": 1.0
+      },
+      "keyword_relevance": {
+        "score": 0.0,
+        "matched_keywords": [],
+        "total_keywords": 6
+      },
+      "judge_scores": {
+        "relevance": 4,
+        "specificity": 4,
+        "completeness": 3,
+        "notes_adherence": 4,
+        "comment": "Tokyo-specific and fairly family-focused, but the itinerary is truncated and only partially covers meals and practical stroller details."
+      },
+      "judge_avg": 3.75,
+      "estimated_cost": 2200.0,
+      "response_time_ms": 31558.43
+    },
+    {
+      "location": "Greece (notes) (38.0, 23.7)",
+      "notes": "one traveller uses a wheelchair, please ensure all recommendations are accessible",
+      "predicted_region": "Greece",
+      "predicted_biome": "coastal",
+      "true_region": "Greece",
+      "true_biome": "coastal",
+      "completed": true,
+      "iterations": 6,
+      "num_tool_calls": 10,
+      "tools_used": [
+        "get_weather",
+        "search_flights",
+        "search_places",
+        "find_vacation_rentals",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places"
+      ],
+      "accuracy": {
+        "name_match": true,
+        "biome_exact": true,
+        "biome_partial": true,
+        "score": 1.0
+      },
+      "keyword_relevance": {
+        "score": 0.0,
+        "matched_keywords": [],
+        "total_keywords": 6
+      },
+      "judge_scores": {
+        "relevance": 3,
+        "specificity": 4,
+        "completeness": 3,
+        "notes_adherence": 3,
+        "comment": "It\u2019s Athens-specific and somewhat accessibility-aware, but the itinerary is incomplete and lacks clearly verified wheelchair-accessible activity and dining recommendations."
+      },
+      "judge_avg": 3.25,
+      "estimated_cost": 1550.0,
+      "response_time_ms": 38009.67
+    },
+    {
+      "location": "Bali (notes) (-8.4, 115.2)",
+      "notes": "this is our honeymoon, we want romantic dinners, a couples spa, and a private villa",
+      "predicted_region": "Bali",
+      "predicted_biome": "island",
+      "true_region": "Bali",
+      "true_biome": "island",
+      "completed": true,
+      "iterations": 3,
+      "num_tool_calls": 9,
+      "tools_used": [
+        "get_weather",
+        "search_flights",
+        "search_places",
+        "find_vacation_rentals",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places"
+      ],
+      "accuracy": {
+        "name_match": true,
+        "biome_exact": true,
+        "biome_partial": true,
+        "score": 1.0
+      },
+      "keyword_relevance": {
+        "score": 0.167,
+        "matched_keywords": [
+          "beach"
+        ],
+        "total_keywords": 6
+      },
+      "judge_scores": {
+        "relevance": 4,
+        "specificity": 4,
+        "completeness": 3,
+        "notes_adherence": 4,
+        "comment": "Romantic Bali-specific stays and some honeymoon touches are included, but the itinerary feels incomplete and lacks detailed daily activities and dining plans."
+      },
+      "judge_avg": 3.75,
+      "estimated_cost": 2000.0,
+      "response_time_ms": 31262.78
+    },
+    {
+      "location": "Nepal (notes) (28.0, 86.9)",
+      "notes": "we are photography enthusiasts focused on landscape and wildlife, suggest golden hour locations and local guides",
+      "predicted_region": "Nepal",
+      "predicted_biome": "diverse",
+      "true_region": "Nepal",
+      "true_biome": "mountain",
+      "completed": true,
+      "iterations": 3,
+      "num_tool_calls": 14,
+      "tools_used": [
+        "get_weather",
+        "search_flights",
+        "search_places",
+        "find_vacation_rentals",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places",
+        "search_places"
+      ],
+      "accuracy": {
+        "name_match": true,
+        "biome_exact": false,
+        "biome_partial": false,
+        "score": 0.5
+      },
+      "keyword_relevance": {
+        "score": 0.167,
+        "matched_keywords": [
+          "trek"
+        ],
+        "total_keywords": 6
+      },
+      "judge_scores": {
+        "relevance": 5,
+        "specificity": 4,
+        "completeness": 3,
+        "notes_adherence": 2,
+        "comment": "Strong Nepal/Kathmandu fit with some photography-aware details, but it is truncated and barely addresses wildlife and local guides."
+      },
+      "judge_avg": 3.5,
+      "estimated_cost": 1340.0,
+      "response_time_ms": 40918.13
+    }
+  ],
+  "summary": {
+    "non_dl": {
+      "n_cases": 17,
+      "n_standard_cases": 12,
+      "n_notes_cases": 5,
+      "task_completion_rate": 1.0,
+      "avg_accuracy_score": 0.941,
+      "name_match_rate": 1.0,
+      "avg_keyword_relevance": 0.265,
+      "avg_judge_overall": 2.98,
+      "avg_judge_relevance": 3.06,
+      "avg_judge_specificity": 3.94,
+      "avg_judge_completeness": 2.35,
+      "avg_judge_notes_adherence": 1.2,
+      "avg_estimated_cost": null,
+      "avg_response_time_ms": 7829.484
+    },
+    "dl": {
+      "n_cases": 17,
+      "n_standard_cases": 12,
+      "n_notes_cases": 5,
+      "task_completion_rate": 1.0,
+      "avg_accuracy_score": 0.941,
+      "name_match_rate": 1.0,
+      "avg_keyword_relevance": 0.167,
+      "avg_judge_overall": 3.53,
+      "avg_judge_relevance": 4.24,
+      "avg_judge_specificity": 3.76,
+      "avg_judge_completeness": 2.71,
+      "avg_judge_notes_adherence": 3.2,
+      "avg_estimated_cost": 1901.18,
+      "avg_response_time_ms": 35833.628
+    }
+  }
+}

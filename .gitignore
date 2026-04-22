@@ -205,3 +205,6 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# MediaPipe model weights (7.5MB) — download via setup script
+perception/models/*.task
