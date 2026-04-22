@@ -5,12 +5,15 @@ Gesture taxonomy (wired to globe control on the client):
                                     tracks the pinch midpoint frame-to-frame
                                     and maps screen-space drag to camera
                                     rotateLeft / rotateUp)
+  peace ✌️    → confirm selection  (index + middle extended, ring + pinky
+                                    curled; fires confirmPick() on the
+                                    client during CONFIRM_* phases)
   open_palm   → zoom              (4 non-thumb fingers extended; palm_area
                                     maps through an exponential curve to
                                     camera altitude — bigger palm = closer)
   point       → laser + dwell     (only the index finger is extended; the
                                     client renders a red dot and fires
-                                    `select` after a 2.5-second dwell)
+                                    `select` after a 2-second dwell)
   fist        → lock view         (no fingers extended; treated as a hold —
                                     the camera doesn't respond to anything)
   none        → no hand detected, or ambiguous pose
@@ -68,7 +71,7 @@ class MediaPipeHandDetector:
 
     `detect(img_bytes)` returns:
       {
-        "gesture": "pinch"|"open_palm"|"point"|"fist"|"none",
+        "gesture": "pinch"|"peace"|"open_palm"|"point"|"fist"|"none",
         "confidence": float,       # 0..1, coarse classifier margin
         "landmarks": [[x,y,z],..], # 21 points in normalized [0,1] image coords,
                                    # empty if no hand detected
@@ -131,9 +134,8 @@ class MediaPipeHandDetector:
         gesture, confidence = classify_gesture(landmarks)
         bbox, palm_area = _compute_bbox(landmarks)
 
-        # Aux points for client-side interaction (gated by gesture label so
-        # the client can't accidentally drive globe rotation from a finger
-        # that wasn't classified as pinch).
+        # Aux points for client-side interaction. Gated by gesture so the
+        # client can't drive globe rotation from a non-pinch pose.
         index_tip = _index_tip_if_only_index(landmarks) if gesture == "point" else None
         pinch_point = _pinch_midpoint(landmarks) if gesture == "pinch" else None
 
@@ -187,32 +189,38 @@ def _hand_scale(landmarks) -> float:
 def classify_gesture(landmarks: list[list[float]]) -> tuple[str, float]:
     """Return (label, confidence) for a set of 21 normalized landmarks.
 
-    Order: pinch → point → open_palm → fist → none. Pinch comes first because
-    thumb+index-touching can co-occur with other fingers curled or partially
-    extended; the defining feature is the tip-to-tip distance, and we want
-    that to shadow the other branches.
+    Order: pinch (thumb-index touching) → point (index only) → peace (index +
+    middle only) → open_palm (4 non-thumb) → fist (none) → none. Checks are
+    mutually exclusive given the per-finger extension flags — peace and point
+    differ by whether middle is extended, so no order swap changes behaviour.
     """
     if len(landmarks) != 21:
         return "none", 0.0
-
-    # Pinch — thumb tip and index tip close together (relative to hand scale).
-    # A real pinch has the other fingers curled, but natural hand poses vary
-    # and the tip-to-tip proximity alone is a strong enough signal.
-    pinch_d = _dist(landmarks[THUMB_TIP], landmarks[INDEX_TIP])
-    pinch_ratio = pinch_d / _hand_scale(landmarks)
-    if pinch_ratio < 0.35:
-        # Tighter pinch (smaller ratio) → higher confidence, floor 0.5.
-        conf = max(0.5, min(1.0, 1.0 - pinch_ratio / 0.35))
-        return "pinch", conf
 
     index = _finger_extended(landmarks, INDEX_TIP, INDEX_PIP)
     middle = _finger_extended(landmarks, MIDDLE_TIP, MIDDLE_PIP)
     ring = _finger_extended(landmarks, RING_TIP, RING_PIP)
     pinky = _finger_extended(landmarks, PINKY_TIP, PINKY_PIP)
 
+    # Pinch — thumb tip and index tip close. Other fingers typically curled;
+    # we don't gate on them because pinch's defining feature is the tip-to-tip
+    # distance, and requiring a specific curl state would just add misfires.
+    pinch_d = _dist(landmarks[THUMB_TIP], landmarks[INDEX_TIP])
+    pinch_ratio = pinch_d / _hand_scale(landmarks)
+    if pinch_ratio < 0.35:
+        conf = max(0.5, min(1.0, 1.0 - pinch_ratio / 0.35))
+        return "pinch", conf
+
     # Point — only the index finger is extended (thumb may or may not be).
     if index and not middle and not ring and not pinky:
         return "point", 0.9
+
+    # Peace ✌️ — index + middle extended, ring + pinky curled. Used as the
+    # confirmation gesture (clicking the "Confirm origin/destination" button
+    # via a hand pose). Disjoint from pinch (which needs thumb-index
+    # proximity) and from point (which requires `not middle`).
+    if index and middle and not ring and not pinky:
+        return "peace", 0.9
 
     # Open palm — 4 non-thumb fingers extended. Orientation no longer matters:
     # rotation is driven by pinch-drag on the client, not palm direction.

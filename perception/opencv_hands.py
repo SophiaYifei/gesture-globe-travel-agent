@@ -19,13 +19,17 @@ learning involved. Pipeline:
     Temporal smoothing across the last 3 raw frames (majority vote)
 
 Gesture output matches the DL classifier's interface:
-    pinch / open_palm / point / fist / none
+    pinch / peace / open_palm / point / fist / none
 
 Pinch is detected via topology: when thumb and index touch they close a
 loop in the skin mask, and findContours with RETR_CCOMP surfaces an inner
 contour inside the hand outline. No such loop ⇒ not a pinch. This is the
 only way classical silhouette CV can catch a pinch reliably — MediaPipe
 just measures 3D landmark distance, which we don't have here.
+
+Peace ✌️ is detected from the _classify branch: tall bbox + moderate
+top-slice width + ≤2 convexity defects. This distinguishes it from point
+(single narrow finger) and open_palm (wide top slice, many defects).
 
 Known limitations (inherent to classical skin-CV):
   * Sensitive to lighting and skin tone — the HSV range is a one-size default.
@@ -225,9 +229,10 @@ class OpenCVHandDetector:
         else:
             top_width_ratio = 1.0
 
-        # Pinch overrides the aspect-based classifier — if the mask has a
-        # closed loop inside the hand contour, that's a pinch pose regardless
-        # of what the outer shape looks like.
+        # Pinch overrides the aspect-based classifier — a closed loop inside
+        # the hand contour means thumb-index are touching. Other fingers in
+        # the outline don't matter here; the peace ✌️ sign has NO such hole
+        # (thumb and index are separated), so it's handled by _classify.
         pinch_point = None
         if pinch_hole is not None:
             raw_gesture = "pinch"
@@ -355,13 +360,15 @@ def _classify(defects_count: int, bw: int, bh: int,
         aspect = bh / bw
         width_ratio = bw / bh
         top_width_ratio = width(top 25% of contour) / bw
-        ┌─────────────────────────────────────────────────────────┐
-        │ aspect > 1.5 AND (w/h < 0.30 OR top_width_ratio < 0.40) │
-        │                                             → point     │
-        │ aspect > 1.3  OR  aspect < 0.80             → open_palm │
-        │ 0.80 ≤ aspect ≤ 1.25 AND sol > 0.85         → fist      │
-        │ otherwise                                   → none      │
-        └─────────────────────────────────────────────────────────┘
+        ┌───────────────────────────────────────────────────────────┐
+        │ aspect > 1.5 AND (w/h < 0.30 OR top_width_ratio < 0.35)   │
+        │                                             → point       │
+        │ aspect > 1.35 AND defects ≤ 2                              │
+        │   AND 0.35 < top_width_ratio < 0.72         → peace ✌️     │
+        │ aspect > 1.3  OR  aspect < 0.80             → open_palm   │
+        │ 0.80 ≤ aspect ≤ 1.25 AND sol > 0.85         → fist        │
+        │ otherwise                                   → none        │
+        └───────────────────────────────────────────────────────────┘
     """
     aspect = bh / max(bw, 1)
     width_ratio = bw / max(bh, 1)
@@ -369,8 +376,21 @@ def _classify(defects_count: int, bw: int, bh: int,
 
     # Point — either the whole blob is narrow (isolated finger) OR just
     # the top slice is narrow (finger protruding from a wider palm).
-    if aspect > 1.5 and (width_ratio < 0.30 or top_width_ratio < 0.40):
+    # Slightly stricter top_width_ratio than before (0.40 → 0.35) so a
+    # narrow peace ✌️ doesn't slip in here; peace has 2 fingertips which
+    # occupy more of the top slice than a single pointed finger.
+    if aspect > 1.5 and (width_ratio < 0.30 or top_width_ratio < 0.35):
         return "point", 0.70
+
+    # Peace ✌️ — index + middle extended, ring + pinky curled. Signature
+    # in silhouette: tall bbox (fingers up), top slice wider than point but
+    # narrower than a full palm (two fingertips occupy the top, the palm
+    # below is wider). Typically shows ~1 convexity defect (the V between
+    # the two extended fingers). Tolerate 0-2 defects because detection
+    # noise sometimes drops the valley and sometimes picks up spurious ones.
+    if (aspect > 1.35 and defects_count <= 2
+            and 0.35 < top_width_ratio < 0.72):
+        return "peace", 0.70
 
     # Open palm — any clearly elongated silhouette, vertical or horizontal.
     # Defects-visible gets higher confidence; fingers-together (no defects)
