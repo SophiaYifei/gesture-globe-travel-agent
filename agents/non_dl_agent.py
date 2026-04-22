@@ -1,16 +1,38 @@
+"""Non-DL Agent — rule-based travel planner.
+
+Perception : Classical CV (color histogram + coordinate bbox lookup). UNCHANGED.
+Planning   : Google Places POI search + deterministic scoring + slot filling.
+             No LLM involved — every decision (which POI fills which day-slot)
+             comes from a fixed scoring formula and a fixed slot schedule.
+Control    : Structured + Markdown output, shape-compatible with DLAgent.
+
+This replaces Tiffany's original biome-keyed template strings. We still
+reuse her REGIONS table for coordinate-to-country lookup and her biome-keyed
+TEMPLATES for trip-tier metadata (best_season, budget_per_day, tips) —
+those are climate facts, not location-specific recommendations. The actual
+itinerary now names real restaurants / museums / hotels pulled from the
+same Google Places API the DL ReAct agent uses.
+
+Scoring formula per POI (rule-based, no learning):
+    score = rating × log(reviews + 1) × style_bonus
+where style_bonus = 1.5 if the POI's Google `type` matches one of the
+user's selected travel styles, else 1.0.
 """
-Non-DL Agent
-Perception : Classical CV (color histograms, spatial coordinate lookup)
-Planning   : Rule-based template system with lookup tables
-Control    : Structured itinerary renderer
-"""
+from __future__ import annotations
+
+import io
+import math
+from datetime import date
+from typing import Optional
 
 import numpy as np
-import json, os
 from PIL import Image
-import io
 
-# ── Region database ────────────────────────────────────────────────────────────
+from tools.places import search_places
+
+
+# ── Region database (used by perception _lookup_region and the DL agent's
+# geo-fallback too — don't remove without updating dl_agent.py). ───────────
 REGIONS = [
     # (name, lat_min, lat_max, lng_min, lng_max, climate, biome, emoji)
     ("Iceland",          63,  67,  -24,  -13, "subarctic",   "tundra",        "🧊"),
@@ -45,6 +67,7 @@ REGIONS = [
     ("Turkey",           36,  42,   26,   45, "mediterranean","diverse",      "🕌"),
     ("Vietnam",           8,  23,  102,  110, "tropical",    "coastal",       "🍜"),
     ("China",            20,  53,   73,  135, "diverse",     "diverse",       "🐉"),
+    ("United Kingdom",   50,  59,   -8,    2, "temperate",   "forest",  "🇬🇧"),
     ("Portugal",         36,  42,  -10,   -6, "mediterranean","coastal",      "🎭"),
     ("Croatia",          42,  46,   13,   19, "mediterranean","coastal",      "⛵"),
     ("Hawaii",           18,  22, -161, -154, "tropical",    "island",        "🌺"),
@@ -53,271 +76,291 @@ REGIONS = [
     ("Indian Ocean",    -60,  30,    20,  100,"oceanic",     "ocean",         "🌊"),
 ]
 
-# ── Activity / tip templates per biome/climate ────────────────────────────────
+
+# ── Biome-keyed metadata. We only keep the fields we can stand behind:
+#   * best_season is a climate fact, grounded in the biome label.
+#   * biome_tips are climate/terrain-specific (sunscreen for tropical,
+#     altitude for alpine, mosquito repellent for rainforest, etc.) —
+#     they're opinions but they're tied to the biome.
+# The per-biome "budget_per_day" field was removed — the numbers were
+# made-up ranges copied from Tiffany's version with no real data source.
+# If the user entered a total budget in the form we just echo that back;
+# otherwise the section is omitted.
 TEMPLATES = {
     "tropical": {
-        "activities": [
-            "Snorkeling and diving at coral reefs",
-            "Jungle trekking and wildlife spotting",
-            "Beach relaxation and water sports",
-            "Visit local night markets for street food",
-            "Sunrise hike to a viewpoint",
-            "Kayaking through mangroves",
-            "Cultural temple or village tour",
-        ],
-        "food": ["Fresh seafood", "Tropical fruits", "Coconut-based dishes", "Street food tours"],
-        "tips": [
-            "Best visited Nov–Apr to avoid monsoon season",
-            "Pack light, breathable clothing and strong sunscreen",
-            "Stay hydrated — heat and humidity are intense",
-            "Mosquito repellent is essential",
-        ],
         "best_season": "November – April",
-        "budget_per_day": "$60–$150 USD",
+        "biome_tips": [
+            "Best visited Nov–Apr to avoid monsoon season.",
+            "Pack light, breathable clothing and strong sunscreen.",
+            "Stay hydrated — heat and humidity are intense.",
+            "Mosquito repellent is essential.",
+        ],
     },
     "mediterranean": {
-        "activities": [
-            "Explore ancient ruins and historical sites",
-            "Coastal boat tours and swimming coves",
-            "Wine tasting at local vineyards",
-            "Wander old town alleyways and markets",
-            "Sunset watching from a hilltop village",
-            "Day trip to a nearby island",
-            "Cooking class with local cuisine",
-        ],
-        "food": ["Tapas / mezze", "Fresh seafood", "Olive oil and local cheese", "Local wine"],
-        "tips": [
-            "July–August is peak season and very crowded — consider May or September",
-            "Many sites close midday — plan morning visits",
-            "Dress modestly when visiting religious sites",
-        ],
         "best_season": "May – June, September – October",
-        "budget_per_day": "$80–$200 USD",
+        "biome_tips": [
+            "July–August is peak season and very crowded — consider May or September.",
+            "Many sites close midday — plan morning visits.",
+            "Dress modestly when visiting religious sites.",
+        ],
     },
     "alpine": {
-        "activities": [
-            "Trekking and mountaineering",
-            "Cable car or gondola rides for panoramic views",
-            "Visit alpine lakes and waterfalls",
-            "Skiing or snowboarding (winter)",
-            "Mountain biking on trail networks",
-            "Visit a high-altitude monastery or shrine",
-            "Wildlife watching (ibex, eagles, marmots)",
+        "best_season": "June – September (trekking), Dec – March (skiing)",
+        "biome_tips": [
+            "Acclimatize gradually to avoid altitude sickness.",
+            "Weather changes fast — always pack a rain layer.",
+            "Book mountain huts well in advance in summer.",
         ],
-        "food": ["Hearty mountain stews", "Yak or local meat dishes", "Cheese fondue / raclette", "Hot tea and local bread"],
-        "tips": [
-            "Acclimatize gradually to avoid altitude sickness",
-            "Weather changes fast — always pack a rain layer",
-            "Book mountain huts well in advance in summer",
-        ],
-        "best_season": "June – September (trekking), December – March (skiing)",
-        "budget_per_day": "$50–$180 USD",
     },
     "arid": {
-        "activities": [
-            "Sunrise and sunset desert walks",
-            "Camel trekking through sand dunes",
-            "Stargazing (minimal light pollution)",
-            "Visit ancient ruins or canyon landscapes",
-            "4WD off-road adventure",
-            "Explore oasis towns and souks",
-            "Hot air balloon ride over the desert",
-        ],
-        "food": ["Slow-cooked tagine", "Dates and dried fruits", "Flatbreads and dips", "Mint tea"],
-        "tips": [
-            "Travel Oct–Mar to avoid extreme heat",
-            "Cover up — sun protection and cultural respect",
-            "Carry more water than you think you need",
-        ],
         "best_season": "October – March",
-        "budget_per_day": "$40–$130 USD",
+        "biome_tips": [
+            "Travel Oct–Mar to avoid extreme heat.",
+            "Cover up — sun protection and cultural respect.",
+            "Carry more water than you think you need.",
+        ],
     },
     "temperate": {
-        "activities": [
-            "Explore the city centre, museums and galleries",
-            "Hiking or cycling through countryside",
-            "Visit castles, cathedrals, or historic sites",
-            "Day trip to a nearby town or village",
-            "Farm-to-table dining experience",
-            "Attend a local festival or market",
-            "Boat or river cruise",
-        ],
-        "food": ["Seasonal local cuisine", "Pub / brasserie culture", "Fresh pastries and coffee", "Local craft beer or wine"],
-        "tips": [
-            "Weather is unpredictable — pack layers",
-            "Spring and autumn are ideal for fewer crowds",
-            "Book popular attractions in advance",
-        ],
         "best_season": "April – June, September – October",
-        "budget_per_day": "$100–$250 USD",
+        "biome_tips": [
+            "Weather is unpredictable — pack layers.",
+            "Spring and autumn are ideal for fewer crowds.",
+            "Book popular attractions in advance.",
+        ],
     },
     "subarctic": {
-        "activities": [
-            "Chase the Northern Lights (aurora borealis)",
-            "Glacier hiking and ice cave exploration",
-            "Whale watching boat tour",
-            "Geothermal pools and natural hot springs",
-            "Dog sledding or snowmobile tour",
-            "Midnight sun experience (summer)",
-            "Birdwatching for puffins and Arctic species",
-        ],
-        "food": ["Fresh Arctic fish (salmon, cod, arctic char)", "Lamb or reindeer dishes", "Skyr / Nordic dairy", "Craft beer"],
-        "tips": [
-            "Pack extreme cold-weather gear even in summer",
-            "Northern Lights: best September – March",
-            "Summer offers 24-hour daylight — bring eye masks",
-        ],
         "best_season": "Jun–Aug (midnight sun), Sep–Mar (Northern Lights)",
-        "budget_per_day": "$150–$350 USD",
+        "biome_tips": [
+            "Pack extreme cold-weather gear even in summer.",
+            "Northern Lights: best September – March.",
+            "Summer offers 24-hour daylight — bring eye masks.",
+        ],
     },
     "island": {
-        "activities": [
-            "Island hopping by ferry or small plane",
-            "Snorkeling over coral gardens",
-            "Visit remote fishing villages",
-            "Cycling around the island perimeter",
-            "Surf lesson or stand-up paddleboarding",
-            "Beachside yoga and wellness retreat",
-        ],
-        "food": ["Grilled catch-of-the-day", "Tropical cocktails", "Local island specialties", "Fresh coconut"],
-        "tips": [
-            "Ferry schedules can be unreliable — build in buffer days",
-            "Book accommodation early during peak season",
-            "Respect marine protected areas",
-        ],
         "best_season": "Varies by island — check local weather patterns",
-        "budget_per_day": "$70–$200 USD",
+        "biome_tips": [
+            "Ferry schedules can be unreliable — build in buffer days.",
+            "Book accommodation early during peak season.",
+            "Respect marine protected areas.",
+        ],
     },
     "savanna": {
-        "activities": [
-            "Game drive safari at dawn and dusk",
-            "Walking safari with armed ranger",
-            "Hot air balloon over the savanna",
-            "Visit a local Maasai or tribal village",
-            "Birdwatching (500+ species common)",
-            "Night game drive for nocturnal animals",
-        ],
-        "food": ["Nyama choma (grilled meat)", "Ugali with stew", "Fresh tropical fruit", "Bush dinner under the stars"],
-        "tips": [
-            "Book safari lodges 6–12 months in advance",
-            "Neutral/khaki colours are best — avoid bright clothing",
-            "Yellow fever vaccination often required",
-            "Best wildlife: Great Migration Jul–Oct in East Africa",
-        ],
         "best_season": "July – October",
-        "budget_per_day": "$100–$500 USD",
+        "biome_tips": [
+            "Book safari lodges 6–12 months in advance.",
+            "Neutral/khaki colours are best — avoid bright clothing.",
+            "Yellow fever vaccination often required.",
+        ],
     },
     "rainforest": {
-        "activities": [
-            "Guided Amazon or jungle river boat tour",
-            "Canopy walkway and tree-top experience",
-            "Indigenous community cultural visit",
-            "Night walk for frogs, insects, and nocturnal creatures",
-            "Piranha fishing",
-            "Visit a wildlife rescue or rehabilitation centre",
-        ],
-        "food": ["Exotic river fish (pacu, tambaqui)", "Açaí and local fruits", "Traditional stews", "Cachaça cocktails"],
-        "tips": [
-            "Malaria prophylaxis strongly recommended",
-            "Dry season (Jun–Nov) best for trails and wildlife",
-            "Hire a local guide — the jungle is disorienting",
-        ],
         "best_season": "June – November",
-        "budget_per_day": "$60–$180 USD",
+        "biome_tips": [
+            "Malaria prophylaxis strongly recommended.",
+            "Dry season (Jun–Nov) best for trails and wildlife.",
+            "Hire a local guide — the jungle is disorienting.",
+        ],
     },
     "mountain": {
-        "activities": [
-            "Multi-day trekking through mountain passes",
-            "Visit ancient monasteries and spiritual sites",
-            "Photography of dramatic landscapes",
-            "Interact with local mountain communities",
-            "Acclimatisation day hikes",
-        ],
-        "food": ["Dal bhat (lentil rice)", "Momos (dumplings)", "Sherpa stew", "Butter tea"],
-        "tips": [
-            "Altitude sickness is real — ascend slowly",
-            "Hire a local guide and porter — supports the community",
-            "Trekking permits required in many regions",
-        ],
         "best_season": "March – May, September – November",
-        "budget_per_day": "$40–$100 USD",
+        "biome_tips": [
+            "Altitude sickness is real — ascend slowly.",
+            "Hire a local guide and porter — supports the community.",
+            "Trekking permits required in many regions.",
+        ],
     },
     "ocean": {
-        "activities": [
-            "Deep sea fishing charter",
-            "Cruise or sailing voyage",
-            "Whale and dolphin watching",
-            "Diving at underwater sea mounts",
-        ],
-        "food": ["Fresh seafood", "Island cuisine at ports of call"],
-        "tips": [
-            "You appear to have clicked on open ocean — try clicking a land destination!",
-            "Consider nearby island or coastal destinations",
-        ],
         "best_season": "Varies by ocean basin",
-        "budget_per_day": "$200–$800 USD (cruise)",
+        "biome_tips": [
+            "You picked open ocean — consider a nearby island instead.",
+            "Deep-sea trips require sea-sickness meds.",
+        ],
     },
     "default": {
-        "activities": [
-            "Explore the local area on foot",
-            "Visit nearby natural landmarks",
-            "Try authentic local cuisine",
-            "Connect with local guides for hidden gems",
-        ],
-        "food": ["Local cuisine", "Street food", "Regional specialties"],
-        "tips": ["Research visa requirements", "Get travel insurance", "Learn a few local phrases"],
         "best_season": "Spring or Autumn",
-        "budget_per_day": "$80–$200 USD",
+        "biome_tips": [],  # No biome signal → no biome tips.
     },
 }
 
+# Generic travel-logistics tips. Only appended when the trip actually
+# crosses a border — printing "Research visa requirements" on a
+# Durham→Asheville weekend is nonsense.
+INTERNATIONAL_TIPS = [
+    "Research visa / entry requirements for the destination country.",
+    "Consider travel insurance that covers medical care abroad.",
+    "Learn a few local phrases — it always helps.",
+]
+
+# Theme for each day — kept from Tiffany, purely cosmetic labelling.
 DAY_STRUCTURES = [
-    {"label": "Day 1", "theme": "Arrival & Orientation", "slot": "activities", "idx": 0},
-    {"label": "Day 2", "theme": "Signature Experience",  "slot": "activities", "idx": 1},
-    {"label": "Day 3", "theme": "Cultural Deep Dive",    "slot": "activities", "idx": 2},
-    {"label": "Day 4", "theme": "Adventure Day",         "slot": "activities", "idx": 3},
-    {"label": "Day 5", "theme": "Hidden Gems & Leisure", "slot": "activities", "idx": 4},
-    {"label": "Day 6", "theme": "Local Immersion",       "slot": "activities", "idx": 5},
-    {"label": "Day 7", "theme": "Farewell & Reflection", "slot": "activities", "idx": 6},
+    {"label": "Day 1", "theme": "Arrival & Orientation"},
+    {"label": "Day 2", "theme": "Signature Experience"},
+    {"label": "Day 3", "theme": "Cultural Deep Dive"},
+    {"label": "Day 4", "theme": "Adventure Day"},
+    {"label": "Day 5", "theme": "Hidden Gems & Leisure"},
+    {"label": "Day 6", "theme": "Local Immersion"},
+    {"label": "Day 7", "theme": "Farewell & Reflection"},
 ]
 
 
-class NonDLAgent:
-    """
-    Perception  : Coordinate-based geographic lookup + PIL color histogram analysis
-    Planning    : Rule-based template + lookup table system
-    Control     : Structured itinerary assembly
-    """
+# ── Rule-based planner configuration ───────────────────────────────────────
 
-    # ── PERCEPTION ─────────────────────────────────────────────────────────────
-    def perceive(self, lat, lng, img_bytes=None):
+# POI searches we issue to Google Places for every trip. The first field is
+# the search query (free text), the second is the Places `includedType`.
+POI_CATEGORIES = [
+    ("tourist attractions",  "tourist_attraction"),
+    ("museums",              "museum"),
+    ("local restaurants",    "restaurant"),
+    ("cafes",                "cafe"),
+    ("hotels",               "lodging"),
+    ("bars",                 "bar"),
+    ("nightlife",            "night_club"),
+    ("parks",                "park"),
+]
+
+# travel_style → Google Places types that get a 1.5× scoring boost.
+STYLE_BONUS = {
+    "foodie":     {"restaurant", "cafe"},
+    "culture":    {"museum", "tourist_attraction"},
+    "adventure":  {"park", "amusement_park", "tourist_attraction"},
+    "nightlife":  {"bar", "night_club"},
+    "relaxation": {"spa", "park"},
+    "nature":     {"park", "tourist_attraction"},
+    "shopping":   {"shopping_mall"},
+}
+
+# Which POI types are eligible for which day-slot. `EVENING_TYPES` includes
+# restaurant as a fallback if the city has no bars / clubs in Places data.
+ATTRACTION_TYPES = {"tourist_attraction", "museum", "park", "amusement_park"}
+FOOD_TYPES       = {"restaurant", "cafe"}
+EVENING_TYPES    = {"bar", "night_club", "restaurant"}
+
+
+def _days_between(a: str, b: str) -> int:
+    """Inclusive day count between two ISO dates. Falls back to 3 if invalid."""
+    try:
+        d1 = date.fromisoformat(a)
+        d2 = date.fromisoformat(b)
+        return max((d2 - d1).days + 1, 1)
+    except Exception:
+        return 3
+
+
+# Common country-name aliases so "USA" and "United States" compare equal.
+_COUNTRY_ALIASES = {
+    "usa": "united states",
+    "us": "united states",
+    "u.s.a.": "united states",
+    "u.s.": "united states",
+    "uk": "united kingdom",
+    "britain": "united kingdom",
+    "great britain": "united kingdom",
+}
+
+
+def _country_of(name: str) -> str:
+    """Pull a country tag off the end of a reverse-geocoded name like
+    "Asheville, North Carolina, United States" → 'united states'. Tolerates
+    both spellings and a few common aliases."""
+    if not name:
+        return ""
+    last = name.split(",")[-1].strip().lower()
+    return _COUNTRY_ALIASES.get(last, last)
+
+
+def _is_cross_border(trip: dict) -> bool:
+    """True when origin and destination are in different countries (or we
+    can't tell for one side). Used to decide whether to include visa /
+    insurance / language tips — nonsense on a same-country trip."""
+    origin = _country_of(trip.get("origin_name", ""))
+    dest = _country_of(trip.get("destination_name", ""))
+    if not origin or not dest:
+        return False  # missing data → assume domestic, skip the generic tips
+    return origin != dest
+
+
+def _style_bonus(place_type: str, styles: list) -> float:
+    """1.5 if any of the user's styles claims this POI type, else 1.0."""
+    for s in styles or []:
+        if place_type in STYLE_BONUS.get(s, set()):
+            return 1.5
+    return 1.0
+
+
+def _score_poi(poi: dict, place_type: str, styles: list) -> float:
+    rating = float(poi.get("rating") or 0)
+    reviews = int(poi.get("num_reviews") or 0)
+    return rating * math.log(reviews + 1) * _style_bonus(place_type, styles)
+
+
+def _render_poi_line(poi: Optional[dict], fallback: str) -> str:
+    """Turn one POI into a markdown fragment for the itinerary. Picks a verb
+    appropriate to the Google Places type (restaurant → 'Enjoy local cuisine
+    at', museum → 'Visit', bar → 'Experience the nightlife at', etc.)."""
+    if not poi:
+        return fallback
+    name = poi.get("name") or "Unknown place"
+    url = poi.get("google_maps_url") or ""
+    rating = poi.get("rating")
+    reviews = poi.get("num_reviews") or 0
+    place_type = poi.get("place_type", "")
+
+    if place_type == "tourist_attraction":
+        verb = "Explore"
+    elif place_type == "museum":
+        verb = "Visit"
+    elif place_type == "restaurant":
+        verb = "Enjoy local cuisine at"
+    elif place_type == "cafe":
+        verb = "Grab coffee at"
+    elif place_type in ("bar", "night_club"):
+        verb = "Experience the nightlife at"
+    elif place_type == "park":
+        verb = "Relax at"
+    elif place_type == "amusement_park":
+        verb = "Have fun at"
+    else:
+        verb = "Visit"
+
+    link = f"[{name}]({url})" if url else f"**{name}**"
+    tail_bits = []
+    if rating:
+        tail_bits.append(f"{rating}⭐")
+    if reviews:
+        tail_bits.append(f"{reviews} reviews")
+    tail = f" ({', '.join(tail_bits)})" if tail_bits else ""
+    return f"{verb} {link}{tail}"
+
+
+class NonDLAgent:
+    """Rule-based itinerary planner. Same output contract as DLAgent."""
+
+    # ── PERCEPTION (unchanged) ────────────────────────────────────────────
+    def perceive(self, lat, lng, img_bytes=None) -> dict:
         region_info = self._lookup_region(lat, lng)
         terrain_hint = self._analyze_image(img_bytes) if img_bytes else None
         if terrain_hint and region_info["biome"] == "diverse":
             region_info["biome"] = terrain_hint
+        region_info["perception_method"] = "Color histogram + coordinate lookup"
         return region_info
 
-    def _lookup_region(self, lat, lng):
-        best = None
+    def _lookup_region(self, lat, lng) -> dict:
+        if lat is None or lng is None:
+            return {"name": "Unknown Region", "climate": "temperate",
+                    "biome": "default", "emoji": "🌍"}
         for row in REGIONS:
             name, lat_min, lat_max, lng_min, lng_max, climate, biome, emoji = row
             if lat_min <= lat <= lat_max and lng_min <= lng <= lng_max:
-                best = {"name": name, "climate": climate, "biome": biome, "emoji": emoji}
-                break
-        if best is None:
-            # fallback: nearest by centroid distance
-            best = {"name": "Unknown Region", "climate": "temperate", "biome": "default", "emoji": "🌍"}
-        return best
+                return {"name": name, "climate": climate,
+                        "biome": biome, "emoji": emoji}
+        return {"name": "Unknown Region", "climate": "temperate",
+                "biome": "default", "emoji": "🌍"}
 
-    def _analyze_image(self, img_bytes):
-        """Classical CV: analyze dominant color to hint at terrain type."""
+    def _analyze_image(self, img_bytes) -> Optional[str]:
+        """Classical-CV terrain hint from dominant colour of a small crop."""
         try:
             img = Image.open(io.BytesIO(img_bytes)).convert("RGB").resize((64, 64))
             arr = np.array(img).reshape(-1, 3).astype(float)
-            mean_color = arr.mean(axis=0)  # [R, G, B]
-            r, g, b = mean_color
-
-            # Simple color-to-terrain heuristic
+            r, g, b = arr.mean(axis=0)
             if b > r + 20 and b > g + 10:
                 return "ocean"
             if g > r + 15 and g > b + 10:
@@ -325,47 +368,240 @@ class NonDLAgent:
             if r > 160 and g > 120 and b < 80:
                 return "arid"
             if r > 200 and g > 200 and b > 200:
-                return "alpine"  # snow/ice
+                return "alpine"
             return None
         except Exception:
             return None
 
-    # ── PLANNING ───────────────────────────────────────────────────────────────
-    def plan(self, region_info, preferences=None):
-        preferences = preferences or {}
-        biome = region_info.get("biome", "default")
-        climate = region_info.get("climate", "temperate")
+    # ── PLANNING (rule-based via Google Places) ────────────────────────────
+    def plan_rule_based(self, region_info: dict, trip: dict) -> dict:
+        destination = (trip.get("destination_name")
+                       or region_info.get("name")
+                       or "the destination")
+        styles = trip.get("travel_style") or []
+        duration = _days_between(trip.get("start_date"), trip.get("end_date"))
 
-        template = TEMPLATES.get(biome) or TEMPLATES.get(climate) or TEMPLATES["default"]
-        activities = template["activities"]
-        duration = preferences.get("duration", 7)
+        # Step 1: Fetch POI candidates from Google Places
+        pois_by_type: dict = {}
+        for query, place_type in POI_CATEGORIES:
+            try:
+                result = search_places(query=query, location=destination,
+                                       type=place_type, max_results=10)
+                pois_by_type[place_type] = result.get("places", [])
+            except Exception as e:
+                print(f"[Non-DL] search_places({place_type}) failed: {e}")
+                pois_by_type[place_type] = []
 
-        itinerary = []
-        for i in range(min(duration, len(DAY_STRUCTURES))):
-            day = DAY_STRUCTURES[i]
-            act_idx = day["idx"] % len(activities)
+        # Step 2: Score every POI — purely multiplicative formula, no ML.
+        scored: list = []
+        for place_type, places in pois_by_type.items():
+            for p in places:
+                scored.append({
+                    **p,
+                    "place_type": place_type,
+                    "score": _score_poi(p, place_type, styles),
+                })
+        scored.sort(key=lambda p: -p["score"])
+
+        # Step 3: Fill day-slots by descending score, no POI repeats.
+        used_names: set = set()
+
+        def take(eligible: set) -> Optional[dict]:
+            for cand in scored:
+                if cand["name"] in used_names:
+                    continue
+                if cand["place_type"] in eligible:
+                    used_names.add(cand["name"])
+                    return cand
+            return None
+
+        biome = region_info.get("biome") or "default"
+        meta = TEMPLATES.get(biome, TEMPLATES["default"])
+
+        # Compose the tip pool: climate/terrain tips always, plus
+        # international-logistics tips only when the trip crosses a border.
+        tips_pool: list = list(meta.get("biome_tips", []))
+        if _is_cross_border(trip):
+            tips_pool += INTERNATIONAL_TIPS
+
+        itinerary: list = []
+        for i in range(min(max(duration, 1), 14)):
+            theme = DAY_STRUCTURES[i % len(DAY_STRUCTURES)]["theme"]
+            morning   = take(ATTRACTION_TYPES)
+            lunch     = take(FOOD_TYPES)
+            afternoon = take(ATTRACTION_TYPES)
+            evening   = take(EVENING_TYPES)
+            # Rotate through the tip pool; skip the daily tip entirely if
+            # there are no tips to show (e.g. domestic trip in an unknown-
+            # biome region like rural NC).
+            daily_tip = tips_pool[i % len(tips_pool)] if tips_pool else ""
             itinerary.append({
-                "day": day["label"],
-                "theme": day["theme"],
-                "activity": activities[act_idx],
-                "tip": template["tips"][i % len(template["tips"])],
+                "day":       f"Day {i + 1}",
+                "theme":     theme,
+                "morning":   _render_poi_line(morning,   "(no morning attraction available)"),
+                "lunch":     _render_poi_line(lunch,     "(no lunch spot available)"),
+                "afternoon": _render_poi_line(afternoon, "(no afternoon attraction available)"),
+                "evening":   _render_poi_line(evening,   "(no evening venue available)"),
+                "tip":       daily_tip,
             })
 
+        # Step 4: Render markdown that mirrors the DL agent's output shape.
+        hotels = sorted(pois_by_type.get("lodging", []),
+                        key=lambda p: -_score_poi(p, "lodging", styles))[:3]
+        markdown = self._render_markdown(destination, trip, duration,
+                                         meta, itinerary, hotels, tips_pool)
+
         return {
-            "itinerary": itinerary,
-            "food": template["food"],
-            "best_season": template["best_season"],
-            "budget": template["budget_per_day"],
-            "tips": template["tips"],
+            "markdown":       markdown,
+            "iterations":     0,
+            "num_tool_calls": sum(1 for _, _ in POI_CATEGORIES),
+            "tools_used":     ["search_places"] * len(POI_CATEGORIES),
+            "itinerary":      itinerary,
+            "food":           [p["name"] for p in pois_by_type.get("restaurant", [])[:5]],
+            "tips":           tips_pool,  # biome tips + (intl tips iff cross-border)
+            # dict.fromkeys preserves insertion order while deduping — Google
+            # Places returns some POIs (e.g. the Louvre) under both
+            # tourist_attraction AND museum, so they show up twice in `scored`.
+            "highlights":     list(dict.fromkeys(p["name"] for p in scored))[:5],
+            "best_season":    meta["best_season"],
+            # Budget echoes the user's own input (if any) — the previous
+            # biome-keyed "$X-$Y USD" numbers were made-up.
+            "budget":         trip.get("budget") or "",
         }
 
-    # ── CONTROL ────────────────────────────────────────────────────────────────
-    def run(self, lat, lng, img_bytes=None, preferences=None):
-        region_info = self.perceive(lat, lng, img_bytes)
-        plan = self.plan(region_info, preferences)
+    @staticmethod
+    def _render_markdown(destination: str, trip: dict, duration: int,
+                         meta: dict, itinerary: list, hotels: list,
+                         tips: list) -> str:
+        styles = trip.get("travel_style") or []
+        style_str = " + ".join(s.capitalize() for s in styles) if styles else ""
+        group = trip.get("group_type", "")
+        start = trip.get("start_date", "")
+        end = trip.get("end_date", "")
+        num_people = trip.get("num_people", "")
+        origin = trip.get("origin_name", "")
+        user_budget = trip.get("budget") or ""
+
+        lines: list = []
+
+        lines.append("### Trip Overview")
+        bits = [f"**{destination}**"]
+        if start and end:
+            bits.append(f"**{start} → {end}** ({duration} days)")
+        if num_people:
+            bits.append(f"**{num_people} traveler{'s' if num_people != 1 else ''}**")
+        if group:
+            bits.append(f"**{group}** trip")
+        if style_str:
+            bits.append(f"**{style_str}** focus")
+        lines.append(" · ".join(bits))
+        if origin and origin != "N/A":
+            lines.append("")
+            lines.append(f"_Departing from {origin}._")
+        lines.append("")
+        lines.append(
+            "_Plan generated by the rule-based non-DL agent — POIs pulled live "
+            "from Google Places, ranked by rating × log(reviews) with a style "
+            "bonus, filled into fixed day-slots. No LLM involved._"
+        )
+        lines.append("")
+
+        if hotels:
+            lines.append("### Accommodation")
+            for h in hotels:
+                name = h.get("name", "?")
+                url = h.get("google_maps_url", "")
+                rating = h.get("rating") or "?"
+                reviews = h.get("num_reviews") or 0
+                link = f"[{name}]({url})" if url else f"**{name}**"
+                lines.append(f"- {link} — {rating}⭐ ({reviews} reviews)")
+            lines.append("")
+
+        lines.append("### Day-by-Day Itinerary")
+        lines.append("")
+        for d in itinerary:
+            lines.append(f"**{d['day']}: {d['theme']}**")
+            lines.append(f"- **Morning:** {d['morning']}")
+            lines.append(f"- **Lunch:** {d['lunch']}")
+            lines.append(f"- **Afternoon:** {d['afternoon']}")
+            lines.append(f"- **Evening:** {d['evening']}")
+            if d.get("tip"):
+                lines.append(f"> *Tip: {d['tip']}*")
+            lines.append("")
+
+        # Practical Info: best season is always fine to show; daily-budget
+        # is only shown if the user gave us one (we echo it back rather
+        # than fabricating a biome-average number).
+        lines.append("### Practical Info")
+        lines.append(f"- **Best season:** {meta['best_season']}")
+        if user_budget:
+            lines.append(f"- **Your total budget:** ${user_budget} USD")
+        lines.append("")
+
+        # Only emit the Travel Tips section if we actually have tips. Tips
+        # are empty when: no biome match (e.g. unknown rural region) AND
+        # it's a domestic trip (so no international-logistics tips apply).
+        if tips:
+            lines.append("### Travel Tips")
+            for tip in tips:
+                lines.append(f"- {tip}")
+
+        return "\n".join(lines)
+
+    # ── CONTROL — new trip-dict entrypoint (shape matches DLAgent.run_trip) ──
+    def run_trip(self, trip: dict, img_bytes=None) -> dict:
+        region_info = self.perceive(
+            trip.get("destination_lat"),
+            trip.get("destination_lng"),
+            img_bytes,
+        )
+        # Prefer the user-confirmed (reverse-geocoded) city name over the
+        # coarse lat/lng-bbox country lookup. That's what Google Places uses
+        # for its search query.
+        if trip.get("destination_name"):
+            region_info["name"] = trip["destination_name"]
+
+        try:
+            plan_data = self.plan_rule_based(region_info, trip)
+        except Exception as e:
+            print(f"[Non-DL run_trip error] {e}")
+            plan_data = {
+                "markdown": f"### Planning failed\n\nRule-based planner errored: `{e}`",
+                "iterations": 0, "num_tool_calls": 0, "tools_used": [],
+                "itinerary": [], "food": [], "tips": [],
+                "highlights": [], "best_season": "", "budget": "",
+            }
+
         return {
             "agent": "non_dl",
             "region": region_info,
-            "plan": plan,
-            "perception_method": "Color histogram + coordinate lookup",
+            "plan": plan_data,
+            "conversation_history": [],
+            "perception_method": region_info.get(
+                "perception_method", "Color histogram + coordinate lookup"
+            ),
+            "trip": trip,
         }
+
+    # ── CONTROL — legacy run() kept so evaluation/evaluator.py still works ───
+    def run(self, lat, lng, img_bytes=None, preferences=None):
+        """Compatibility shim: builds a minimal trip dict from legacy args and
+        forwards to run_trip(). Used by `evaluation/evaluator.py`, which
+        tests each of 12 geographic coordinates without a full form state."""
+        preferences = preferences or {}
+        style = preferences.get("style")
+        trip = {
+            "destination_lat":  lat,
+            "destination_lng":  lng,
+            "destination_name": "",
+            "origin_name":      "N/A",
+            "start_date":       "",
+            "end_date":         "",
+            "num_people":       preferences.get("num_people", 2),
+            "group_type":       preferences.get("group_type", "solo"),
+            "transport":        "flight",
+            "travel_style":     [style] if style and style != "balanced" else [],
+            "budget":           None,
+            "notes":            "",
+        }
+        return self.run_trip(trip, img_bytes=img_bytes)

@@ -2,135 +2,396 @@
 Evaluation module
 Compares Non-DL vs DL agent across:
 1. Perception accuracy (did we identify the region correctly?)
-2. Itinerary relevance (do activities match the destination?)
-3. Response time
-4. Human-rated quality score simulation
+2. Itinerary relevance (keyword-based + LLM-as-judge)
+3. Notes adherence (did the agent address special requests?)
+4. Response time
+5. Estimated cost extraction
+6. Task completion
 """
 
-import time, json
+import sys, os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+import time, json, re
+from pathlib import Path
 from agents.non_dl_agent import NonDLAgent
 from agents.dl_agent import DLAgent
 
-# Ground truth test cases: (lat, lng, true_region, true_biome)
+EVAL_DIR     = Path(__file__).resolve().parent
+RESULTS_FILE = EVAL_DIR / "eval_results.json"
+
+# Test cases 
+# Fields: (lat, lng, true_region, true_biome, true_climate, notes)
+# notes = "" means a standard case with no special request.
 TEST_CASES = [
-    (27.9881,  86.9250, "Nepal",        "mountain",      "alpine"),
-    (-8.4095, 115.1889, "Bali",         "island",        "tropical"),
-    (48.8566,   2.3522, "France",       "mixed",         "temperate"),
-    (23.6345, -102.5528,"Mexico",       "coastal",       "diverse"),
-    (64.9631, -19.0208, "Iceland",      "tundra",        "subarctic"),
-    (-1.2921,  36.8219, "Kenya",        "savanna",       "tropical"),
-    (37.9838,  23.7275, "Greece",       "coastal",       "mediterranean"),
-    (-3.4653, -62.2159, "Brazil",       "rainforest",    "tropical"),
-    (27.1751,  78.0421, "India",        "diverse",       "tropical"),
-    (35.6762, 139.6503, "Japan",        "island",        "temperate"),
-    (-33.8688, 151.2093,"Australia",    "outback",       "diverse"),
-    (51.5074,  -0.1278, "USA Northeast","forest",        "temperate"),  # London — tests edge
+    # ── Standard perception/planning cases ──
+    (27.9881,   86.9250, "Nepal",     "mountain",    "alpine",        ""),
+    (-8.4095,  115.1889, "Bali",      "island",      "tropical",      ""),
+    (48.8566,    2.3522, "France",    "mixed",       "temperate",     ""),
+    (23.6345, -102.5528, "Mexico",    "coastal",     "diverse",       ""),
+    (64.9631,  -19.0208, "Iceland",   "tundra",      "subarctic",     ""),
+    (-1.2921,   36.8219, "Kenya",     "savanna",     "tropical",      ""),
+    (37.9838,   23.7275, "Greece",    "coastal",     "mediterranean", ""),
+    (-3.4653,  -62.2159, "Brazil",    "rainforest",  "tropical",      ""),
+    (27.1751,   78.0421, "India",     "diverse",     "tropical",      ""),
+    (35.6762,  139.6503, "Japan",     "island",      "temperate",     ""),
+    (-33.8688, 151.2093, "Australia", "outback",     "diverse",       ""),
+    (51.5074,   -0.1278, "London",    "forest",      "temperate",     ""),
+
+    # ── Notes-focused cases ──
+    (48.8566,    2.3522, "France",    "mixed",       "temperate",
+     "two people are vegan and one has a severe nut allergy, please suggest safe restaurants"),
+
+    (35.6762,  139.6503, "Japan",     "island",      "temperate",
+     "travelling with a 4 year old and a 7 year old, need kid-friendly activities and stroller-accessible spots"),
+
+    (37.9838,   23.7275, "Greece",    "coastal",     "mediterranean",
+     "one traveller uses a wheelchair, please ensure all recommendations are accessible"),
+
+    (-8.4095,  115.1889, "Bali",      "island",      "tropical",
+     "this is our honeymoon, we want romantic dinners, a couples spa, and a private villa"),
+
+    (27.9881,   86.9250, "Nepal",     "mountain",    "alpine",
+     "we are photography enthusiasts focused on landscape and wildlife, suggest golden hour locations and local guides"),
 ]
 
+# ── Keyword bank ──────────────────────────────────────────────────────────────
 ACTIVITY_KEYWORDS = {
-    "mountain":     ["trek", "hike", "mountain", "monastery", "altitude", "glacier"],
-    "tropical":     ["beach", "snorkel", "jungle", "coral", "dive", "palm"],
-    "temperate":    ["museum", "castle", "cycling", "market", "countryside", "wine"],
-    "mediterranean":["ruins", "boat", "vineyard", "old town", "island", "swim"],
-    "subarctic":    ["aurora", "glacier", "whale", "hot spring", "dog sled", "midnight"],
-    "arid":         ["desert", "camel", "dune", "oasis", "ruin", "canyon"],
-    "rainforest":   ["amazon", "canopy", "jungle", "piranha", "river", "wildlife"],
-    "savanna":      ["safari", "game drive", "lion", "balloon", "maasai", "wildlife"],
-    "island":       ["island hop", "snorkel", "ferry", "surf", "beach", "dive"],
-    "alpine":       ["trek", "cable car", "monastery", "acclimatize", "pass"],
+    "mountain":      ["trek", "hike", "mountain", "monastery", "altitude", "glacier"],
+    "tropical":      ["beach", "snorkel", "jungle", "coral", "dive", "palm"],
+    "temperate":     ["museum", "castle", "cycling", "market", "countryside", "wine"],
+    "mediterranean": ["ruins", "boat", "vineyard", "old town", "island", "swim"],
+    "subarctic":     ["aurora", "glacier", "whale", "hot spring", "dog sled", "midnight"],
+    "arid":          ["desert", "camel", "dune", "oasis", "ruin", "canyon"],
+    "rainforest":    ["amazon", "canopy", "jungle", "piranha", "river", "wildlife"],
+    "savanna":       ["safari", "game drive", "lion", "balloon", "maasai", "wildlife"],
+    "island":        ["island hop", "snorkel", "ferry", "surf", "beach", "dive"],
+    "alpine":        ["trek", "cable car", "monastery", "acclimatize", "pass"],
+    "forest":        ["hike", "park", "trail", "nature", "walk", "garden"],
+    "mixed":         ["museum", "tour", "market", "culture", "history", "food"],
+    "coastal":       ["beach", "snorkel", "boat", "dive", "seafood", "swim"],
+    "diverse":       ["temple", "market", "tour", "culture", "food", "history"],
+    "outback":       ["wildlife", "outback", "reef", "hike", "tour", "nature"],
+    "tundra":        ["aurora", "glacier", "geyser", "hot spring", "waterfall", "lava"],
 }
 
+# ── LLM Judge ─────────────────────────────────────────────────────────────────
+JUDGE_PROMPT = """You are evaluating a travel itinerary generated by an AI agent.
+Score the itinerary on each dimension from 1 (poor) to 5 (excellent):
 
+- relevance: Do the activities and recommendations match the destination and its environment?
+- specificity: Are real place names, local foods, and authentic experiences mentioned (not generic advice)?
+- completeness: Does it cover activities, food/dining, and practical tips?
+- notes_adherence: ONLY score this if special requests were provided. Did the agent specifically address the user's notes (dietary needs, accessibility, occasion, interests etc.)? If no notes were provided, return null for this field.
+
+Reply with ONLY a single JSON object in this exact format, no markdown, no backticks:
+{"relevance": <int>, "specificity": <int>, "completeness": <int>, "notes_adherence": <int or null>, "comment": "<one short sentence>"}
+"""
+
+
+def llm_judge(location_name: str, biome: str, plan_text: str, notes: str = "") -> dict:
+    """Score a plan using an LLM judge. Falls back gracefully if API unavailable."""
+    try:
+        from openai import OpenAI
+        from config import OPENROUTER_API_KEY, JUDGE_MODEL_NAME
+        client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=OPENROUTER_API_KEY)
+
+        user_content = f"Destination: {location_name} (biome: {biome})\n"
+        user_content += f"User's special requests / notes: {notes if notes else 'None'}\n"
+        user_content += f"\nItinerary:\n{plan_text[:3000]}"
+
+        resp = client.chat.completions.create(
+            model=JUDGE_MODEL_NAME,
+            messages=[
+                {"role": "system", "content": JUDGE_PROMPT},
+                {"role": "user",   "content": user_content},
+            ],
+            max_tokens=250,
+        )
+        text = resp.choices[0].message.content or ""
+        match = re.search(r"\{.*\}", text, re.DOTALL)
+        if match:
+            return json.loads(match.group(0))
+        return {"error": "could not parse judge response"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def judge_avg(scores: dict, include_notes: bool = False) -> float | None:
+    """Average of judge dimensions. Includes notes_adherence only when present."""
+    if not isinstance(scores, dict):
+        return None
+    dims = ["relevance", "specificity", "completeness"]
+    if include_notes and isinstance(scores.get("notes_adherence"), (int, float)):
+        dims.append("notes_adherence")
+    vals = [scores[d] for d in dims if isinstance(scores.get(d), (int, float))]
+    return round(sum(vals) / len(vals), 2) if vals else None
+
+
+# ── Helper: extract plan text from either agent ───────────────────────────────
+def extract_plan_text(plan: dict) -> str:
+    """Works for both agents: DL returns markdown, Non-DL returns structured lists."""
+    parts = []
+    if plan.get("markdown"):
+        parts.append(plan["markdown"])
+    if isinstance(plan.get("itinerary"), list):
+        for day in plan["itinerary"]:
+            parts.append(" ".join(str(v) for v in day.values()))
+    parts.append(" ".join(plan.get("food", [])))
+    parts.append(" ".join(plan.get("tips", [])))
+    return " ".join(parts).lower()
+
+
+# ── Cost extraction ───────────────────────────────────────────────────────────
+def extract_total_cost(response: str) -> float | None:
+    """Try to find a total dollar amount in the agent's response."""
+    if not response:
+        return None
+    candidates = re.findall(
+        r"total[^$]{0,40}\$([0-9,]+(?:\.[0-9]{1,2})?)", response, re.IGNORECASE
+    )
+    if not candidates:
+        return None
+    values = []
+    for c in candidates:
+        try:
+            values.append(float(c.replace(",", "")))
+        except ValueError:
+            pass
+    return max(values) if values else None
+
+
+# ── Metrics ───────────────────────────────────────────────────────────────────
 def region_accuracy(predicted_name, predicted_biome, true_name, true_biome):
-    name_match = true_name.lower() in predicted_name.lower() or predicted_name.lower() in true_name.lower()
+    name_match = (
+        true_name.lower() in predicted_name.lower()
+        or predicted_name.lower() in true_name.lower()
+    )
     biome_match = predicted_biome.lower() == true_biome.lower()
     partial = any(word in predicted_biome.lower() for word in true_biome.lower().split())
     return {
-        "name_match": name_match,
-        "biome_exact": biome_match,
+        "name_match":    name_match,
+        "biome_exact":   biome_match,
         "biome_partial": partial or biome_match,
-        "score": (1.0 if name_match else 0.0) * 0.5 + (1.0 if biome_match else 0.5 if partial else 0.0) * 0.5,
+        "score": (1.0 if name_match else 0.0) * 0.5
+                 + (1.0 if biome_match else 0.5 if partial else 0.0) * 0.5,
     }
 
 
-def itinerary_relevance(plan, true_biome):
+def itinerary_relevance(plan: dict, true_biome: str) -> dict:
+    """Keyword-based relevance check (fast, deterministic)."""
     keywords = ACTIVITY_KEYWORDS.get(true_biome, [])
     if not keywords:
         return {"score": 0.5, "matched_keywords": [], "note": "No keywords for biome"}
-    
-    # Collect all text from plan
-    all_text = ""
-    if isinstance(plan.get("itinerary"), list):
-        for day in plan["itinerary"]:
-            all_text += " ".join(str(v) for v in day.values()).lower() + " "
-    all_text += " ".join(plan.get("food", [])).lower()
-    all_text += " ".join(plan.get("tips", [])).lower()
-
-    matched = [kw for kw in keywords if kw in all_text]
-    score = len(matched) / len(keywords)
-    return {"score": score, "matched_keywords": matched, "total_keywords": len(keywords)}
+    all_text = extract_plan_text(plan)
+    matched  = [kw for kw in keywords if kw in all_text]
+    return {
+        "score":            round(len(matched) / len(keywords), 3),
+        "matched_keywords": matched,
+        "total_keywords":   len(keywords),
+    }
 
 
+# ── Shared trip builder ───────────────────────────────────────────────────────
+def build_trip(lat: float, lng: float, true_name: str, notes: str) -> dict:
+    """Build a standard trip dict that both agents accept via run_trip().
+    Using run_trip() for both agents ensures:
+    - destination_name is set → Google Places gets a real search query
+    - notes are passed through → agent can address special requests
+    - output shape is identical → fair comparison
+    """
+    return {
+        "origin_name":      "New York, USA",
+        "origin_lat":       40.7128,
+        "origin_lng":       -74.0060,
+        "destination_name": true_name,
+        "destination_lat":  lat,
+        "destination_lng":  lng,
+        "start_date":       "2026-06-01",
+        "end_date":         "2026-06-04",
+        "num_people":       2,
+        "group_type":       "couple",
+        "transport":        "flight",
+        "travel_style":     ["cultural", "foodie"],
+        "budget":           None,
+        "notes":            notes,
+    }
+
+
+# ── Print table ───────────────────────────────────────────────────────────────
+def print_results_table(results: dict):
+    headers = ["Location", "Agent", "OK", "Acc", "KW-Rel", "Quality", "Notes", "Cost", "Time(ms)"]
+    widths   = [26,          8,       3,    5,     7,        7,         5,        8,      9]
+
+    def fmt_row(cells):
+        return "  ".join(str(c).ljust(w)[:w] for c, w in zip(cells, widths))
+
+    print("\n" + fmt_row(headers))
+    print("-" * (sum(widths) + 2 * (len(widths) - 1)))
+
+    for i in range(len(results["non_dl"])):
+        for agent_key, label in [("non_dl", "Non-DL"), ("dl", "DL")]:
+            r            = results[agent_key][i]
+            quality      = judge_avg(r.get("judge_scores", {}))
+            notes_score  = r.get("judge_scores", {}).get("notes_adherence")
+            notes_cell   = str(notes_score) if notes_score is not None else "n/a"
+            cost         = r.get("estimated_cost")
+            cost_cell    = f"${int(cost)}" if cost is not None else "n/a"
+            loc_display  = r["location"][:26] if agent_key == "non_dl" else ""
+            print(fmt_row([
+                loc_display,
+                label,
+                "✓" if r.get("completed") else "✗",
+                round(r["accuracy"]["score"], 2),
+                round(r["keyword_relevance"]["score"], 2),
+                quality if quality is not None else "-",
+                notes_cell,
+                cost_cell,
+                r.get("response_time_ms", "-"),
+            ]))
+        print()
+
+
+# ── Main evaluation loop ──────────────────────────────────────────────────────
 def run_evaluation():
     non_dl = NonDLAgent()
-    dl = DLAgent()
+    dl     = DLAgent()
 
     results = {"non_dl": [], "dl": [], "summary": {}}
 
-    for lat, lng, true_name, true_biome, true_climate in TEST_CASES:
-        # Non-DL
-        t0 = time.time()
-        nd_result = non_dl.run(lat, lng)
-        nd_time = time.time() - t0
+    for lat, lng, true_name, true_biome, true_climate, notes in TEST_CASES:
+        label = f"{true_name} (notes)" if notes else true_name
+        print(f"  Evaluating {label}...", flush=True)
 
-        nd_region = nd_result["region"]
-        nd_acc = region_accuracy(nd_region["name"], nd_region["biome"], true_name, true_biome)
-        nd_rel = itinerary_relevance(nd_result["plan"], true_biome)
+        trip = build_trip(lat, lng, true_name, notes)
+
+        # ── Non-DL — now uses run_trip() so destination_name + notes are passed ──
+        t0 = time.time()
+        nd_result = non_dl.run_trip(trip)
+        nd_time   = time.time() - t0
+
+        nd_region    = nd_result["region"]
+        nd_acc       = region_accuracy(nd_region["name"], nd_region["biome"], true_name, true_biome)
+        nd_rel       = itinerary_relevance(nd_result["plan"], true_biome)
+        nd_plan_text = extract_plan_text(nd_result["plan"])
+        nd_judge     = llm_judge(true_name, true_biome, nd_plan_text, notes)
+        nd_cost      = extract_total_cost(nd_plan_text)
+        nd_completed = bool(nd_plan_text.strip())
 
         results["non_dl"].append({
-            "location": f"{true_name} ({lat:.1f}, {lng:.1f})",
-            "predicted_region": nd_region["name"],
-            "predicted_biome": nd_region["biome"],
-            "true_region": true_name,
-            "true_biome": true_biome,
-            "accuracy": nd_acc,
-            "relevance": nd_rel,
-            "response_time_ms": round(nd_time * 1000),
+            "location":          f"{label} ({lat:.1f}, {lng:.1f})",
+            "notes":             notes,
+            "predicted_region":  nd_region["name"],
+            "predicted_biome":   nd_region["biome"],
+            "true_region":       true_name,
+            "true_biome":        true_biome,
+            "completed":         nd_completed,
+            "num_tool_calls":    nd_result["plan"].get("num_tool_calls", 0),
+            "tools_used":        nd_result["plan"].get("tools_used", []),
+            "accuracy":          nd_acc,
+            "keyword_relevance": nd_rel,
+            "judge_scores":      nd_judge,
+            "judge_avg":         judge_avg(nd_judge, include_notes=bool(notes)),
+            "estimated_cost":    nd_cost,
+            "response_time_ms":  round(nd_time * 1000, 2),
         })
 
-        # DL (without CLIP since it needs GPU + model download; uses geo fallback)
+        # ── DL — uses run_trip() as before ──
         t0 = time.time()
-        dl_result = dl.run(lat, lng)
-        dl_time = time.time() - t0
+        dl_result = dl.run_trip(trip)
+        dl_time   = time.time() - t0
 
-        dl_region = dl_result["region"]
-        dl_acc = region_accuracy(dl_region["name"], dl_region["biome"], true_name, true_biome)
-        dl_rel = itinerary_relevance(dl_result["plan"], true_biome)
+        dl_region     = dl_result["region"]
+        dl_acc        = region_accuracy(dl_region["name"], dl_region["biome"], true_name, true_biome)
+        dl_rel        = itinerary_relevance(dl_result["plan"], true_biome)
+        dl_plan_text  = extract_plan_text(dl_result["plan"])
+        dl_judge      = llm_judge(true_name, true_biome, dl_plan_text, notes)
+        dl_cost       = extract_total_cost(dl_plan_text)
+        dl_iterations = dl_result["plan"].get("iterations", 0)
+        dl_completed  = bool(dl_plan_text.strip()) and dl_iterations < 15
 
         results["dl"].append({
-            "location": f"{true_name} ({lat:.1f}, {lng:.1f})",
-            "predicted_region": dl_region["name"],
-            "predicted_biome": dl_region["biome"],
-            "true_region": true_name,
-            "true_biome": true_biome,
-            "accuracy": dl_acc,
-            "relevance": dl_rel,
-            "response_time_ms": round(dl_time * 1000),
+            "location":          f"{label} ({lat:.1f}, {lng:.1f})",
+            "notes":             notes,
+            "predicted_region":  dl_region["name"],
+            "predicted_biome":   dl_region["biome"],
+            "true_region":       true_name,
+            "true_biome":        true_biome,
+            "completed":         dl_completed,
+            "iterations":        dl_iterations,
+            "num_tool_calls":    dl_result["plan"].get("num_tool_calls", 0),
+            "tools_used":        dl_result["plan"].get("tools_used", []),
+            "accuracy":          dl_acc,
+            "keyword_relevance": dl_rel,
+            "judge_scores":      dl_judge,
+            "judge_avg":         judge_avg(dl_judge, include_notes=bool(notes)),
+            "estimated_cost":    dl_cost,
+            "response_time_ms":  round(dl_time * 1000, 2),
         })
 
-    # Summary stats
+    # ── Summary stats ──
     for agent_key in ["non_dl", "dl"]:
         agent_results = results[agent_key]
-        avg_acc = sum(r["accuracy"]["score"] for r in agent_results) / len(agent_results)
-        avg_rel = sum(r["relevance"]["score"] for r in agent_results) / len(agent_results)
-        avg_time = sum(r["response_time_ms"] for r in agent_results) / len(agent_results)
-        name_acc = sum(1 for r in agent_results if r["accuracy"]["name_match"]) / len(agent_results)
+        n             = len(agent_results)
+        notes_cases   = [r for r in agent_results if r["notes"]]
+
+        def safe_avg(lst, key_fn):
+            vals = [key_fn(r) for r in lst if key_fn(r) is not None]
+            return round(sum(vals) / len(vals), 3) if vals else None
+
+        judge_dims = ["relevance", "specificity", "completeness"]
+        judge_avgs = {}
+        for dim in judge_dims:
+            vals = [
+                r["judge_scores"][dim]
+                for r in agent_results
+                if isinstance(r.get("judge_scores"), dict)
+                and isinstance(r["judge_scores"].get(dim), (int, float))
+            ]
+            judge_avgs[f"avg_judge_{dim}"] = round(sum(vals) / len(vals), 2) if vals else None
+
+        notes_adherence_vals = [
+            r["judge_scores"]["notes_adherence"]
+            for r in notes_cases
+            if isinstance(r.get("judge_scores"), dict)
+            and isinstance(r["judge_scores"].get("notes_adherence"), (int, float))
+        ]
+
+        overall_judge = [r["judge_avg"] for r in agent_results if r.get("judge_avg") is not None]
+        costs         = [r["estimated_cost"] for r in agent_results if r.get("estimated_cost") is not None]
+
         results["summary"][agent_key] = {
-            "avg_accuracy_score": round(avg_acc, 3),
-            "name_match_rate": round(name_acc, 3),
-            "avg_relevance_score": round(avg_rel, 3),
-            "avg_response_time_ms": round(avg_time),
-            "n_cases": len(agent_results),
+            "n_cases":                   n,
+            "n_standard_cases":          n - len(notes_cases),
+            "n_notes_cases":             len(notes_cases),
+            "task_completion_rate":      round(sum(1 for r in agent_results if r.get("completed")) / n, 3),
+            "avg_accuracy_score":        safe_avg(agent_results, lambda r: r["accuracy"]["score"]),
+            "name_match_rate":           round(sum(1 for r in agent_results if r["accuracy"]["name_match"]) / n, 3),
+            "avg_keyword_relevance":     safe_avg(agent_results, lambda r: r["keyword_relevance"]["score"]),
+            "avg_judge_overall":         round(sum(overall_judge) / len(overall_judge), 2) if overall_judge else None,
+            **judge_avgs,
+            "avg_judge_notes_adherence": round(sum(notes_adherence_vals) / len(notes_adherence_vals), 2) if notes_adherence_vals else None,
+            "avg_estimated_cost":        round(sum(costs) / len(costs), 2) if costs else None,
+            "avg_response_time_ms":      safe_avg(agent_results, lambda r: r["response_time_ms"]),
         }
 
     return results
+
+
+if __name__ == "__main__":
+    print("Running evaluation...\n")
+    results = run_evaluation()
+
+    # Save full results to file
+    with open(RESULTS_FILE, "w") as f:
+        json.dump(results, f, indent=2)
+    print(f"\nFull results saved to {RESULTS_FILE}")
+
+    # Print table and summary
+    print_results_table(results)
+
+    print("\n=========== AGGREGATE SUMMARY ===========")
+    for agent_key in ["non_dl", "dl"]:
+        print(f"\n  [{agent_key.upper()}]")
+        for k, v in results["summary"][agent_key].items():
+            print(f"    {k}: {v}")
