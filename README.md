@@ -1,5 +1,5 @@
 # GestureGlobe — A Gesture-Controlled Travel Planning Agent
-### Project 2 · Perception · Planning · Control
+### Project 2 · Perception · Planning · Control · Evaluation
 
 An interactive vacation planner driven by **hand gestures over a 3D globe**. Point a webcam at yourself, pinch to rotate the Earth, dwell to drop a pin, and let the agent build you a real day-by-day itinerary with actual restaurants, hotels, flights, and vacation rentals.
 
