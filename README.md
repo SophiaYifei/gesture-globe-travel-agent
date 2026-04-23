@@ -225,9 +225,3 @@ Runs the full evaluation suite. Returns the scored comparison JSON.
 
 ---
 
-## 📹 Demo tips
-
-- Start zoomed-out; use **pinch** to rotate to a continent, **open palm** to zoom in, **point + 2 s hold** to drop the origin pin, **peace** to confirm.
-- Repeat for destination.
-- Fill the form, hit "Plan my trip", compare the DL and Non-DL outputs on the same trip.
-- Run **Evaluate** at the end to show the side-by-side metrics.
