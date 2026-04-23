@@ -77,113 +77,39 @@ REGIONS = [
 ]
 
 
-# ── Biome-keyed metadata. We only keep the fields we can stand behind:
-#   * best_season is a climate fact, grounded in the biome label.
-#   * biome_tips are climate/terrain-specific (sunscreen for tropical,
-#     altitude for alpine, mosquito repellent for rainforest, etc.) —
-#     they're opinions but they're tied to the biome.
-# The per-biome "budget_per_day" field was removed — the numbers were
-# made-up ranges copied from Tiffany's version with no real data source.
-# If the user entered a total budget in the form we just echo that back;
-# otherwise the section is omitted.
+# ── Biome-keyed metadata. We only keep best_season, which is a climate
+# fact grounded in the biome label (tropical monsoon windows, alpine
+# trekking vs. skiing windows, Mediterranean shoulder seasons, etc.).
+#
+# The per-biome "biome_tips" were dropped — they were generic strings
+# keyed on coarse biomes ("arid" → "cover up for cultural respect") and
+# fired on destinations where they made no sense (LA is in the "USA
+# Southwest" biome=arid bbox, but cultural-modesty dress advice and
+# "extreme heat" framing are simply wrong for Los Angeles). If we can't
+# stand behind a tip destination-by-destination, we don't print it. Same
+# policy we applied earlier to the made-up "$80-$200 USD" daily budgets.
+#
+# The per-biome "budget_per_day" was removed even earlier for the same
+# reason — we echo the user's own budget if they typed one, else nothing.
 TEMPLATES = {
-    "tropical": {
-        "best_season": "November – April",
-        "biome_tips": [
-            "Best visited Nov–Apr to avoid monsoon season.",
-            "Pack light, breathable clothing and strong sunscreen.",
-            "Stay hydrated — heat and humidity are intense.",
-            "Mosquito repellent is essential.",
-        ],
-    },
-    "mediterranean": {
-        "best_season": "May – June, September – October",
-        "biome_tips": [
-            "July–August is peak season and very crowded — consider May or September.",
-            "Many sites close midday — plan morning visits.",
-            "Dress modestly when visiting religious sites.",
-        ],
-    },
-    "alpine": {
-        "best_season": "June – September (trekking), Dec – March (skiing)",
-        "biome_tips": [
-            "Acclimatize gradually to avoid altitude sickness.",
-            "Weather changes fast — always pack a rain layer.",
-            "Book mountain huts well in advance in summer.",
-        ],
-    },
-    "arid": {
-        "best_season": "October – March",
-        "biome_tips": [
-            "Travel Oct–Mar to avoid extreme heat.",
-            "Cover up — sun protection and cultural respect.",
-            "Carry more water than you think you need.",
-        ],
-    },
-    "temperate": {
-        "best_season": "April – June, September – October",
-        "biome_tips": [
-            "Weather is unpredictable — pack layers.",
-            "Spring and autumn are ideal for fewer crowds.",
-            "Book popular attractions in advance.",
-        ],
-    },
-    "subarctic": {
-        "best_season": "Jun–Aug (midnight sun), Sep–Mar (Northern Lights)",
-        "biome_tips": [
-            "Pack extreme cold-weather gear even in summer.",
-            "Northern Lights: best September – March.",
-            "Summer offers 24-hour daylight — bring eye masks.",
-        ],
-    },
-    "island": {
-        "best_season": "Varies by island — check local weather patterns",
-        "biome_tips": [
-            "Ferry schedules can be unreliable — build in buffer days.",
-            "Book accommodation early during peak season.",
-            "Respect marine protected areas.",
-        ],
-    },
-    "savanna": {
-        "best_season": "July – October",
-        "biome_tips": [
-            "Book safari lodges 6–12 months in advance.",
-            "Neutral/khaki colours are best — avoid bright clothing.",
-            "Yellow fever vaccination often required.",
-        ],
-    },
-    "rainforest": {
-        "best_season": "June – November",
-        "biome_tips": [
-            "Malaria prophylaxis strongly recommended.",
-            "Dry season (Jun–Nov) best for trails and wildlife.",
-            "Hire a local guide — the jungle is disorienting.",
-        ],
-    },
-    "mountain": {
-        "best_season": "March – May, September – November",
-        "biome_tips": [
-            "Altitude sickness is real — ascend slowly.",
-            "Hire a local guide and porter — supports the community.",
-            "Trekking permits required in many regions.",
-        ],
-    },
-    "ocean": {
-        "best_season": "Varies by ocean basin",
-        "biome_tips": [
-            "You picked open ocean — consider a nearby island instead.",
-            "Deep-sea trips require sea-sickness meds.",
-        ],
-    },
-    "default": {
-        "best_season": "Spring or Autumn",
-        "biome_tips": [],  # No biome signal → no biome tips.
-    },
+    "tropical":      {"best_season": "November – April"},
+    "mediterranean": {"best_season": "May – June, September – October"},
+    "alpine":        {"best_season": "June – September (trekking), Dec – March (skiing)"},
+    "arid":          {"best_season": "October – March"},
+    "temperate":     {"best_season": "April – June, September – October"},
+    "subarctic":     {"best_season": "Jun–Aug (midnight sun), Sep–Mar (Northern Lights)"},
+    "island":        {"best_season": "Varies by island — check local weather patterns"},
+    "savanna":       {"best_season": "July – October"},
+    "rainforest":    {"best_season": "June – November"},
+    "mountain":      {"best_season": "March – May, September – November"},
+    "ocean":         {"best_season": "Varies by ocean basin"},
+    "default":       {"best_season": ""},
 }
 
-# Generic travel-logistics tips. Only appended when the trip actually
-# crosses a border — printing "Research visa requirements" on a
-# Durham→Asheville weekend is nonsense.
+# Generic travel-logistics tips — only appended when the trip actually
+# crosses a border. Visa / insurance / language advice is universally
+# true for international travel and wrong for domestic, which is exactly
+# the signal we key on. A same-country trip gets no tips at all.
 INTERNATIONAL_TIPS = [
     "Research visa / entry requirements for the destination country.",
     "Consider travel insurance that covers medical care abroad.",
@@ -415,14 +341,24 @@ class NonDLAgent:
                     return cand
             return None
 
-        biome = region_info.get("biome") or "default"
-        meta = TEMPLATES.get(biome, TEMPLATES["default"])
+        # Look up biome metadata (best_season + biome_tips). Fall back to the
+        # region's climate when the biome label doesn't have its own entry
+        # (e.g. REGIONS["France"] has biome="mixed" which isn't keyed in
+        # TEMPLATES, but its climate "temperate" is — and "temperate"
+        # best-season advice is what we actually want for a Paris trip).
+        biome = region_info.get("biome") or ""
+        climate = region_info.get("climate") or ""
+        meta = (TEMPLATES.get(biome)
+                or TEMPLATES.get(climate)
+                or TEMPLATES["default"])
 
-        # Compose the tip pool: climate/terrain tips always, plus
-        # international-logistics tips only when the trip crosses a border.
-        tips_pool: list = list(meta.get("biome_tips", []))
-        if _is_cross_border(trip):
-            tips_pool += INTERNATIONAL_TIPS
+        # Tips: only the international-travel trio, and only for cross-border
+        # trips. Biome-keyed tips were dropped — they were generic chapter-
+        # header advice that often contradicted the real destination (LA
+        # getting "cover up for cultural respect" from the arid biome, etc.)
+        tips_pool: list = (
+            list(INTERNATIONAL_TIPS) if _is_cross_border(trip) else []
+        )
 
         itinerary: list = []
         for i in range(min(max(duration, 1), 14)):
@@ -529,14 +465,19 @@ class NonDLAgent:
                 lines.append(f"> *Tip: {d['tip']}*")
             lines.append("")
 
-        # Practical Info: best season is always fine to show; daily-budget
-        # is only shown if the user gave us one (we echo it back rather
-        # than fabricating a biome-average number).
-        lines.append("### Practical Info")
-        lines.append(f"- **Best season:** {meta['best_season']}")
-        if user_budget:
-            lines.append(f"- **Your total budget:** ${user_budget} USD")
-        lines.append("")
+        # Practical Info — render only fields we can stand behind:
+        #   * best_season from the biome template (real climate fact), or
+        #     nothing if the destination didn't match any known biome
+        #   * user-provided total budget echoed back, if present
+        # When both are empty, the whole section is dropped.
+        best_season = meta.get("best_season") or ""
+        if best_season or user_budget:
+            lines.append("### Practical Info")
+            if best_season:
+                lines.append(f"- **Best season:** {best_season}")
+            if user_budget:
+                lines.append(f"- **Your total budget:** ${user_budget} USD")
+            lines.append("")
 
         # Only emit the Travel Tips section if we actually have tips. Tips
         # are empty when: no biome match (e.g. unknown rural region) AND

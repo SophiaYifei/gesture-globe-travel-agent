@@ -90,14 +90,12 @@ def plan():
     map_image_b64 = data.get('map_image')
     img_bytes = base64.b64decode(map_image_b64.split(',')[-1]) if map_image_b64 else None
 
+    # Both agents now share the same trip-dict entrypoint. The Non-DL agent
+    # upgraded from template strings to a rule-based planner that pulls real
+    # POIs from Google Places, so its output shape (markdown + itinerary) is
+    # identical to the DL agent's — frontend renders them the same way.
     if agent_type == 'non_dl':
-        preferences = {
-            'duration': _days_between(trip['start_date'], trip['end_date']),
-            'style': (trip['travel_style'][0] if trip['travel_style'] else 'balanced'),
-            'budget': 'mid-range',
-        }
-        result = non_dl_agent.run(trip['destination_lat'], trip['destination_lng'], img_bytes, preferences)
-        result['trip'] = trip
+        result = non_dl_agent.run_trip(trip, img_bytes=img_bytes)
     else:
         result = dl_agent.run_trip(trip, img_bytes=img_bytes)
 

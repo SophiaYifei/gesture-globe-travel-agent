@@ -49,7 +49,7 @@
 
   /* ── Top bar ── */
   #topbar {
-    position: absolute; top: 0; left: 0; right: 0; z-index: 900;
+    position: fixed; top: 0; left: 0; right: var(--panel-w); z-index: 900;
     display: flex; align-items: center; gap: 20px;
     padding: 14px 20px;
     background: linear-gradient(to bottom, rgba(26,23,20,0.75) 0%, transparent 100%);
@@ -65,7 +65,9 @@
 
   /* ── Agent toggle ── */
   #agent-toggle {
-    position: absolute; top: 16px; right: calc(var(--panel-w) + 20px); z-index: 910;
+    /* position: fixed (viewport-relative) so any Cesium canvas resize or
+       backdrop-filter re-sampling during globe drag doesn't nudge it. */
+    position: fixed; top: 16px; right: calc(var(--panel-w) + 20px); z-index: 910;
     display: flex; background: rgba(26,23,20,0.82); border-radius: 32px;
     padding: 4px; gap: 2px; backdrop-filter: blur(8px);
     border: 1px solid rgba(255,255,255,0.1);
@@ -79,7 +81,7 @@
 
   /* ── Phase banner (cursor hint evolves based on state) ── */
   #phase-banner {
-    position: absolute; bottom: 28px; left: 50%; transform: translateX(-50%);
+    position: fixed; bottom: 28px; left: calc((100vw - var(--panel-w)) / 2); transform: translateX(-50%);
     z-index: 900; background: rgba(26,23,20,0.85); color: #fff;
     font-size: 13px; font-weight: 400; padding: 10px 22px; border-radius: 32px;
     backdrop-filter: blur(8px); pointer-events: none;
@@ -325,7 +327,7 @@
 
   /* ── Eval panel ── */
   #eval-panel {
-    position: absolute; bottom: 20px; left: 20px; z-index: 900;
+    position: fixed; bottom: 20px; left: 20px; z-index: 900;
     background: rgba(26,23,20,0.88); backdrop-filter: blur(12px);
     border-radius: 12px; padding: 14px 18px;
     border: 1px solid rgba(255,255,255,0.08);
@@ -339,7 +341,7 @@
   .eval-bar-wrap { height: 3px; background: rgba(255,255,255,0.1); border-radius: 2px; margin-bottom: 12px; }
   .eval-bar { height: 3px; border-radius: 2px; background: var(--rust-light); transition: width 0.6s; }
   #eval-btn {
-    position: absolute; bottom: 20px; left: 20px; z-index: 901;
+    position: fixed; bottom: 20px; left: 20px; z-index: 901;
     background: rgba(26,23,20,0.78); backdrop-filter: blur(8px); color: rgba(255,255,255,0.7);
     border: 1px solid rgba(255,255,255,0.1); border-radius: 8px;
     padding: 8px 16px; font-size: 12px; cursor: pointer; font-family: var(--sans);
@@ -363,7 +365,7 @@
 
   /* ── Gesture camera (top-left) ── */
   #gesture-toggle {
-    position: absolute; top: 16px; left: 16px; z-index: 901;
+    position: fixed; top: 16px; left: 16px; z-index: 901;
     background: rgba(26,23,20,0.78); backdrop-filter: blur(8px);
     color: rgba(255,255,255,0.85); border: 1px solid rgba(255,255,255,0.1);
     border-radius: 8px; padding: 8px 14px; font-size: 12px; cursor: pointer;
@@ -373,7 +375,7 @@
   #gesture-toggle:hover { color: #fff; background: rgba(26,23,20,0.92); }
 
   #gesture-cam {
-    position: absolute; top: 16px; left: 16px; z-index: 910;
+    position: fixed; top: 16px; left: 16px; z-index: 910;
     width: 220px; background: rgba(26,23,20,0.92); backdrop-filter: blur(12px);
     border-radius: 12px; overflow: hidden;
     border: 1px solid rgba(255,255,255,0.08);
@@ -513,6 +515,28 @@
   }
   #palm-hold-label.active { display: block; }
 
+  /* On-screen zoom buttons (bottom-right of the map) — fallback for
+     trackpads that don't send wheel events reliably, or for users who
+     just prefer tap-to-zoom. Cesium's built-in trackpad handling also
+     works (two-finger scroll + pinch) but it's not always obvious. */
+  #zoom-controls {
+    position: fixed; right: calc(var(--panel-w) + 20px); bottom: 20px; z-index: 901;
+    display: flex; flex-direction: column; gap: 2px;
+    background: rgba(26,23,20,0.82); border-radius: 10px;
+    padding: 4px; backdrop-filter: blur(8px);
+    border: 1px solid rgba(255,255,255,0.08);
+  }
+  #zoom-controls button {
+    width: 32px; height: 32px; border-radius: 8px;
+    background: transparent; color: rgba(255,255,255,0.85);
+    border: none; cursor: pointer;
+    font-size: 18px; line-height: 1; font-weight: 500;
+    font-family: var(--sans);
+    transition: background 0.15s;
+  }
+  #zoom-controls button:hover { background: rgba(255,255,255,0.08); color: #fff; }
+  #zoom-controls button:active { background: rgba(196,82,42,0.5); }
+
   .select-pin {
     position: fixed; left: 0; top: 0;
     width: 18px; height: 18px; border-radius: 50%;
@@ -564,6 +588,13 @@
     <div id="phase-banner" class="origin">
       <span class="dot"></span>
       <span id="phase-text">Click your departure city</span>
+    </div>
+
+    <!-- Zoom buttons — click/tap to zoom in/out. Works on every device
+         regardless of whether the browser forwards trackpad wheel events. -->
+    <div id="zoom-controls">
+      <button onclick="zoomGlobe('in')"  title="Zoom in">＋</button>
+      <button onclick="zoomGlobe('out')" title="Zoom out">ー</button>
     </div>
 
     <button id="eval-btn" onclick="runEval()">📊 Run Evaluation</button>
@@ -714,6 +745,12 @@ const viewer = new Cesium.Viewer(mapEl, {
   navigationHelpButton: false,
   infoBox: false,
   selectionIndicator: false,
+  // Render-on-demand: Cesium only repaints when the scene actually changes
+  // (camera move, imagery tile arrives, entity update). While gestures are
+  // running this keeps the GPU / main-thread idle between user inputs, so
+  // MediaPipe inference and JSON roundtrips don't compete for CPU.
+  requestRenderMode: true,
+  maximumRenderTimeChange: Infinity,
 });
 // Kill the default Ion-hosted Bing imagery layer (it requires a valid Ion
 // access token and renders black when we zero the token) and swap in OSM
@@ -748,6 +785,21 @@ _cesiumClickHandler.setInputAction((evt) => {
 
 // Keep Cesium sized to the container on window resize (viewer.resize detects).
 window.addEventListener('resize', () => viewer.resize());
+
+// Programmatic zoom — used by the on-screen +/− buttons. Keeps camera lat/lng
+// but scales altitude by a factor (0.65 = step closer, 1.55 = step away),
+// clamped to the same range the open_palm gesture uses.
+function zoomGlobe(direction) {
+  if (!viewer) return;
+  const factor = direction === 'in' ? 0.65 : 1.55;
+  const cart = viewer.camera.positionCartographic;
+  const newHeight = Math.max(ZOOM_MIN_HEIGHT,
+                    Math.min(ZOOM_MAX_HEIGHT, cart.height * factor));
+  viewer.camera.flyTo({
+    destination: Cesium.Cartesian3.fromRadians(cart.longitude, cart.latitude, newHeight),
+    duration: 0.35,
+  });
+}
 
 function markerData() {
   const out = [];
@@ -1077,10 +1129,10 @@ function updatePhaseBanner() {
   banner.classList.remove('origin', 'dest', 'hidden');
   if (phase === 'PICK_ORIGIN') {
     banner.classList.add('origin');
-    text.textContent = 'Click your departure city';
+    text.textContent = 'Click your departure city (or drag / scroll the globe first)';
   } else if (phase === 'PICK_DEST') {
     banner.classList.add('dest');
-    text.textContent = 'Click your destination';
+    text.textContent = 'Click your destination (or drag / scroll the globe first)';
   } else {
     banner.classList.add('hidden');
   }
@@ -1148,7 +1200,14 @@ function renderInstructionCard() {
   div.innerHTML = `
     <div class="label">Next step</div>
     <div class="name" style="font-size:16px;">Click the map to choose your ${which}</div>
-    <div class="coords" style="margin-top:8px;">Tip: click near a major city for better results.</div>
+    <div style="margin-top:12px; padding-top:10px; border-top:1px solid var(--border);
+                font-size:11px; color:var(--muted); line-height:1.7;">
+      <div style="font-weight:500; color:var(--ink); margin-bottom:4px; letter-spacing:0.04em; text-transform:uppercase; font-size:10px;">Mouse / trackpad</div>
+      <div><b>Click</b> a spot to pick &nbsp;·&nbsp; <b>drag</b> to rotate the globe</div>
+      <div><b>Two-finger scroll</b> or <b>pinch</b> on trackpad to zoom, or use the <b>＋ / ー</b> buttons bottom-right</div>
+      <div style="margin-top:10px; font-weight:500; color:var(--ink); margin-bottom:4px; letter-spacing:0.04em; text-transform:uppercase; font-size:10px;">Hands-free (optional)</div>
+      <div>Click <b>✋ Enable gestures</b> top-left to drive the globe with your hand.</div>
+    </div>
   `;
   return div;
 }
@@ -1523,6 +1582,7 @@ function renderEval(data) {
 
 const GESTURE_EMOJI = {
   pinch:     '🤏',
+  peace:     '✌️',
   open_palm: '🖐️',
   point:     '☝️',
   fist:      '✊',
@@ -1530,13 +1590,18 @@ const GESTURE_EMOJI = {
 };
 const GESTURE_DISPLAY = {
   pinch:     'Pinch + drag',
+  peace:     'Peace · Confirm',
   open_palm: 'Zoom (palm area)',
   point:     'Aiming',
   fist:      'View locked',
   none:      'No gesture',
 };
 const GESTURE_INTERVAL_MS = 100;  // 10 fps — smoother laser tracking
-const GESTURE_FRAME_WIDTH = 320;  // downscale before sending to save bandwidth/CPU
+const GESTURE_FRAME_WIDTH = 240;  // downscale before sending. 240 is ~44% less pixel
+                                  // area than 320 → MediaPipe inference drops from
+                                  // ~80ms to ~50ms per frame on Apple Silicon, and
+                                  // JPEG encode on the main thread halves in cost.
+const GESTURE_JPEG_QUALITY = 0.55;
 
 let gestureStream = null;
 let gestureLoopId = null;
@@ -1619,7 +1684,7 @@ async function captureAndClassify() {
   ctx.scale(-1, 1);
   ctx.drawImage(gestureVideoEl, 0, 0, gestureCanvas.width, gestureCanvas.height);
   ctx.restore();
-  const dataUrl = gestureCanvas.toDataURL('image/jpeg', 0.6);
+  const dataUrl = gestureCanvas.toDataURL('image/jpeg', GESTURE_JPEG_QUALITY);
 
   gestureInFlight = true;
   try {
@@ -1678,8 +1743,12 @@ function setGestureLabel(data) {
     }
   } else if (gesture === 'pinch') {
     meta.textContent = 'drag the pinch to rotate globe';
+  } else if (gesture === 'peace') {
+    meta.textContent = (phase === 'CONFIRM_ORIGIN' || phase === 'CONFIRM_DEST')
+      ? 'confirming selection…'
+      : 'no confirmation needed right now';
   } else if (gesture === 'point') {
-    meta.textContent = 'hold 2.5 s on a spot to select';
+    meta.textContent = 'hold 2 s on a spot to select';
   } else if (gesture === 'fist') {
     meta.textContent = 'zoom locked · hold open_palm 2 s to resume';
   } else {
@@ -1700,7 +1769,7 @@ function setGestureLabel(data) {
 // even when "held still", so we accept drift within DWELL_TOLERANCE_PX and
 // only reset the dwell timer when the tip leaves that zone. A conic-gradient
 // progress ring around the dot gives real-time feedback on dwell progress.
-const DWELL_DURATION_MS = 2500;   // 2.5 s hold → select
+const DWELL_DURATION_MS = 2000;   // 2 s hold → select
 const DWELL_TOLERANCE_PX = 35;    // allow this much tremor without resetting
 // Linearly amplify the fingertip range — a hand naturally sweeps the middle
 // of the camera frame, so mapping raw [0,1] tip coords to the map makes the
@@ -1846,10 +1915,17 @@ function flashLabel(emoji, name, meta, color) {
 //   point     → no-op here; handled by updateLaserPointer (dwell to select).
 // Pinch sensitivity scales with altitude — fast sweeps when the globe is
 // small on screen (camera far out), fine precision when zoomed into streets.
-// Formula: sens = BASE × sqrt(altitude / ZOOM_MAX_HEIGHT). At max altitude
-// the coefficient equals BASE (like the previous 0.002 rad/px baseline);
-// at min altitude it drops by ~14× (150 km / 30 Mm → sqrt ≈ 0.07).
+// Formula: sens = BASE × (altitude / ZOOM_MAX_HEIGHT)^0.75. The 0.75
+// exponent (vs the previous sqrt = 0.5) gives a steeper slowdown at close
+// zoom — at min altitude (150 km / 30 Mm ≈ 0.005 ratio) sens drops by ~75×
+// instead of 14×, which matches the "bigger map, much slower" ask.
 const PINCH_SENS_BASE = 0.0020;
+const PINCH_SENS_EXP  = 0.75;
+// Deadband: ignore accumulated sub-pixel jitter. The MediaPipe landmark
+// detector has ~1 px frame-to-frame noise even with a still hand; at close
+// zoom this would translate into visible camera wobble. We accumulate dx/dy
+// across frames and only apply rotation once the total moves ≥ 1.2 px.
+const PINCH_DEADBAND_PX = 1.2;
 const ZOOM_MIN_HEIGHT = 150_000;      // 150 km — street-level detail via OSM
 const ZOOM_MAX_HEIGHT = 30_000_000;   // 30,000 km — full earth + margin
 const ZOOM_PALM_LO = 0.05;
@@ -1863,8 +1939,10 @@ const ZOOM_LERP = 0.30;               // fraction of residual per frame
 const OPEN_PALM_HOLD_MS = 2000;
 
 let _pinchLastPoint = null;           // { x, y } screen coords from prev frame
+let _pinchAccumDx = 0, _pinchAccumDy = 0;  // accumulated sub-deadband jitter
 let _openPalmStartTs = null;          // ms timestamp when open_palm run started
 let _viewLocked = false;              // set by fist; cleared by completed 2 s hold
+let _peaceFired = false;              // latched so one ✌️ pose fires one confirm
 
 function applyGestureToGlobe(data) {
   if (!viewer) return;
@@ -1887,20 +1965,43 @@ function applyGestureToGlobe(data) {
   // (updateLaserPointer still gates the laser + dwell to PICK phases only,
   // since selecting doesn't make sense after the picks are done.)
 
+  // Peace ✌️ — index + middle extended. Treated as the "confirm" gesture
+  // because its shape is clearly distinct from pinch (no thumb-index loop)
+  // and from point (two fingers up, not one). When the side panel has a
+  // pending pick awaiting confirmation we fire the same code path as
+  // clicking the "Confirm origin / Confirm destination" button.
+  // `_peaceFired` latches so one held peace pose only fires once; a
+  // different gesture has to intervene before the next peace registers.
+  if (gesture === 'peace') {
+    const inConfirm = (phase === 'CONFIRM_ORIGIN' || phase === 'CONFIRM_DEST');
+    if (!_peaceFired && inConfirm && pendingPick && !pendingPick.loading) {
+      _peaceFired = true;
+      flashLabel('✌️', 'Confirmed', 'location locked in', 'rgb(50, 210, 120)');
+      confirmPick();
+    }
+    _pinchLastPoint = null;
+    _pinchAccumDx = 0; _pinchAccumDy = 0;
+    return;
+  }
+  // Any frame that isn't peace releases the one-shot latch.
+  _peaceFired = false;
+
   if (gesture === 'pinch' && data.pinch_point) {
     const { x, y } = _mapTipToScreen(data.pinch_point);
     if (_pinchLastPoint) {
-      const dx = x - _pinchLastPoint.x;
-      const dy = y - _pinchLastPoint.y;
-      // sqrt-proportional scaling — fast rotate when globe is small on
-      // screen (high altitude), precise when zoomed into streets (low alt).
-      const alt = viewer.camera.positionCartographic.height;
-      const altT = Math.max(0, Math.min(1, alt / ZOOM_MAX_HEIGHT));
-      const sens = PINCH_SENS_BASE * Math.sqrt(altT);
-      // Drag RIGHT on screen ⇒ globe spins left ⇒ rotate camera LEFT.
-      viewer.camera.rotateLeft(dx * sens);
-      // Drag DOWN on screen ⇒ look up toward the poles ⇒ rotateUp(-dy).
-      viewer.camera.rotateUp(-dy * sens);
+      _pinchAccumDx += x - _pinchLastPoint.x;
+      _pinchAccumDy += y - _pinchLastPoint.y;
+      // Apply rotation only after the accumulated drag passes the deadband
+      // — prevents single-pixel MediaPipe jitter from spinning the globe
+      // at close zoom.
+      if (Math.hypot(_pinchAccumDx, _pinchAccumDy) >= PINCH_DEADBAND_PX) {
+        const alt = viewer.camera.positionCartographic.height;
+        const altT = Math.max(0, Math.min(1, alt / ZOOM_MAX_HEIGHT));
+        const sens = PINCH_SENS_BASE * Math.pow(altT, PINCH_SENS_EXP);
+        viewer.camera.rotateLeft(_pinchAccumDx * sens);
+        viewer.camera.rotateUp(-_pinchAccumDy * sens);
+        _pinchAccumDx = 0; _pinchAccumDy = 0;
+      }
     }
     _pinchLastPoint = { x, y };
     _openPalmStartTs = null;  // pinch interrupts any open-palm hold
@@ -1909,6 +2010,7 @@ function applyGestureToGlobe(data) {
   }
   // Any non-pinch frame clears the drag anchor so the next pinch starts fresh.
   _pinchLastPoint = null;
+  _pinchAccumDx = 0; _pinchAccumDy = 0;
 
   if (gesture === 'fist') {
     // Fist = "lock": the next open_palm must be held for 2 s to re-enable
